@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080b0d">
+    <title>EchoAlert | Sibu Emergency Command Center</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <strong>EchoAlert</strong>
+        <span class="divider"></span>
+        <span>Sibu Emergency Command Center</span>
+      </div>
+      <div class="system-health" aria-label="System health">
+        <span class="health-copy">Sensors online</span>
+        <strong><span id="node-count">6</span> / 6</strong>
+        <span class="online-dot" aria-hidden="true"></span>
+      </div>
+    </header>
+
+    <div class="app-frame">
+      <nav class="side-rail" aria-label="Command center sections">
+        <button class="rail-button" type="button" aria-label="Overview" data-tooltip="Overview"><span aria-hidden="true">H</span></button>
+        <button class="rail-button active" type="button" aria-label="Live incidents" data-tooltip="Live incidents"><span aria-hidden="true">A</span></button>
+        <button class="rail-button" type="button" aria-label="Sensor network" data-tooltip="Sensor network"><span aria-hidden="true">N</span></button>
+        <button class="rail-button" type="button" aria-label="Responders" data-tooltip="Responders"><span aria-hidden="true">R</span></button>
+        <button class="rail-button rail-bottom" type="button" aria-label="Settings" data-tooltip="Settings"><span aria-hidden="true">S</span></button>
+      </nav>
+
+      <main class="operations" aria-label="Urban acoustic incident simulator">
+        <section class="map-stage" aria-label="Live acoustic sensor map">
+          <svg id="city-map" viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid slice" role="img" aria-labelledby="map-title map-desc">
+            <title id="map-title">Sibu acoustic sensor network simulation</title>
+            <desc id="map-desc">A dark city map with six microphone array nodes, an acoustic source, sound wave fronts, bearings, and a triangulated incident estimate.</desc>
+            <defs>
+              <pattern id="minor-grid" width="34" height="34" patternUnits="userSpaceOnUse">
+                <path d="M 34 0 L 0 0 0 34" class="minor-grid-line"></path>
+              </pattern>
+              <filter id="incident-glow" x="-100%" y="-100%" width="300%" height="300%">
+                <feGaussianBlur stdDeviation="10" result="blur"></feGaussianBlur>
+                <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+              </filter>
+              <filter id="sensor-glow" x="-100%" y="-100%" width="300%" height="300%">
+                <feGaussianBlur stdDeviation="4" result="blur"></feGaussianBlur>
+                <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+              </filter>
+            </defs>
+            <rect width="1200" height="720" class="map-base"></rect>
+            <rect width="1200" height="720" fill="url(#minor-grid)" opacity="0.34"></rect>
+            <g id="district-layer"></g>
+            <g id="road-layer"></g>
+            <g id="map-label-layer"></g>
+            <g id="wave-layer"></g>
+            <g id="bearing-layer"></g>
+            <g id="sensor-layer"></g>
+            <g id="result-layer"></g>
+          </svg>
+
+          <div class="map-shade" aria-hidden="true"></div>
+
+          <section class="simulation-console" aria-label="Simulation controls">
+            <div class="console-heading">
+              <div>
+                <span class="section-kicker">Scenario injector</span>
+                <strong>Acoustic event</strong>
+              </div>
+              <span class="live-tag"><i></i> Live</span>
+            </div>
+            <label for="event-type">Signature</label>
+            <select id="event-type">
+              <option value="collision">Vehicle collision</option>
+              <option value="glass">Shattering glass</option>
+              <option value="metal">Metal impact</option>
+              <option value="structure">Structural failure</option>
+              <option value="industrial">Illegal industrial activity</option>
+            </select>
+            <div class="range-control">
+              <label for="noise-level">Ambient noise <span id="noise-readout">35 dB</span></label>
+              <input id="noise-level" type="range" min="20" max="85" value="35">
+            </div>
+            <div class="range-control">
+              <label for="event-energy">Event intensity <span id="energy-readout">118 dB</span></label>
+              <input id="event-energy" type="range" min="85" max="145" value="118">
+            </div>
+            <div class="console-actions">
+              <button id="simulate-btn" class="primary-action" type="button"><span aria-hidden="true">▶</span> Trigger event</button>
+              <button id="randomize-btn" class="icon-action" type="button" aria-label="Move event" data-tooltip="Move event"><span aria-hidden="true">↗</span></button>
+            </div>
+          </section>
+
+          <div class="map-legend" aria-label="Map legend">
+            <span><i class="legend-sensor"></i> Sensor node</span>
+            <span><i class="legend-event"></i> Incident</span>
+            <span><i class="legend-estimate"></i> Estimate</span>
+          </div>
+
+          <div class="zoom-controls" aria-label="Map controls">
+            <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+            <button id="zoom-out" type="button" aria-label="Zoom out">-</button>
+            <button id="recenter" type="button" aria-label="Center on incident">◎</button>
+          </div>
+
+          <article id="incident-panel" class="incident-panel" aria-labelledby="incident-status">
+            <header class="incident-header">
+              <div><span class="warning-icon" aria-hidden="true">!</span><strong id="incident-status">Status: critical - multi-sensor confirmation</strong></div>
+              <button id="close-panel" type="button" aria-label="Close incident panel">×</button>
+            </header>
+
+            <div class="incident-content">
+              <section class="evidence-section" aria-labelledby="evidence-title">
+                <div class="section-title-row">
+                  <div>
+                    <span class="section-kicker">Sensor fusion</span>
+                    <h2 id="evidence-title">Audio and visual verification</h2>
+                  </div>
+                  <span id="fusion-state" class="fusion-state"><i></i> Correlated</span>
+                </div>
+
+                <div class="evidence-grid">
+                  <figure class="evidence-card">
+                    <figcaption>Visual AI: CCTV C-04 <span>Jalan Awang Ramli Amit</span></figcaption>
+                    <div class="cctv-frame">
+                      <img src="assets/cctv-collision.png" alt="Traffic camera view of two cars after a collision at an urban intersection">
+                      <div class="camera-meta"><span>CAM 04</span><span id="camera-time">08:14:02</span></div>
+                      <div class="detection-box"><span>Impact zone</span></div>
+                      <button id="play-evidence" class="play-button" type="button" aria-label="Play visual evidence"><span aria-hidden="true">▶</span></button>
+                    </div>
+                    <div class="evidence-footer"><span class="analysis-dot"></span><strong id="vision-label">Rapid deceleration detected</strong><span id="vision-score">96.4%</span></div>
+                  </figure>
+
+                  <figure class="evidence-card">
+                    <figcaption>Audio AI: Spectrogram analysis <span id="signature-band">0-8 kHz</span></figcaption>
+                    <div class="spectrogram-wrap">
+                      <canvas id="spectrogram" width="460" height="260" aria-label="Generated acoustic event spectrogram"></canvas>
+                      <div class="frequency-axis"><span>8 kHz</span><span>4 kHz</span><span>0 Hz</span></div>
+                      <div class="signature-callout"><span id="classification-label">Collision signature</span><strong id="confidence-label">--</strong></div>
+                    </div>
+                    <div class="evidence-footer"><span class="analysis-dot"></span><strong id="signature-text">Broadband impulse detected</strong><span id="snr-summary">-- dB SNR</span></div>
+                  </figure>
+                </div>
+
+                <div class="triangulation-strip">
+                  <div><span>First arrival</span><strong id="first-node">N1</strong></div>
+                  <div><span>Clock drift</span><strong><span id="clock-skew">2.4</span> ms</strong></div>
+                  <div><span>Localization error</span><strong id="error-label">--</strong></div>
+                  <div><span>Packet loss</span><strong><span id="packet-loss">0</span>%</strong></div>
+                </div>
+              </section>
+
+              <aside class="incident-details" aria-labelledby="details-title">
+                <div class="section-title-row">
+                  <div>
+                    <span class="section-kicker">Response workflow</span>
+                    <h2 id="details-title">Incident details and dispatch</h2>
+                  </div>
+                </div>
+                <dl class="detail-list">
+                  <div><dt>Incident ID</dt><dd id="incident-id">EA-20260808-01</dd></div>
+                  <div><dt>Location</dt><dd id="location-label">Intersection 4, Jalan Awang Ramli Amit, Sibu</dd><small id="coordinate-label">2.2913, 111.8291</small></div>
+                  <div><dt>Detected</dt><dd id="timestamp-label">08:14:02 AM</dd></div>
+                  <div><dt>Confirmed event</dt><dd id="confirmed-event">High-impact vehicle collision</dd></div>
+                  <div><dt>Recommended response</dt><dd id="response-label">Medical Tier 1 + traffic unit</dd></div>
+                </dl>
+                <button id="dispatch-btn" class="dispatch-button" type="button"><span aria-hidden="true">➤</span><span id="dispatch-label">Dispatch medical tier 1</span></button>
+                <button id="review-btn" class="review-button" type="button">Flag for operator review</button>
+                <p id="dispatch-note" class="dispatch-note" role="status">Awaiting operator confirmation</p>
+              </aside>
+            </div>
+          </article>
+        </section>
+
+        <section class="network-strip" aria-labelledby="network-title">
+          <div class="network-heading">
+            <div><span class="section-kicker">Time difference of arrival</span><h2 id="network-title">Sensor network telemetry</h2></div>
+            <div class="network-summary"><span id="locked-count">6</span> nodes locked · <span id="estimate-label">--</span></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Node</th><th>Direction</th><th>Arrival</th><th>Delta</th><th>SNR</th><th>Status</th></tr></thead>
+              <tbody id="telemetry-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
