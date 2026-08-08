@@ -1,0 +1,14 @@
+{
+  "name": "echoalert-acoustic-incident-network",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "simulate": "node scripts/simulate-network.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

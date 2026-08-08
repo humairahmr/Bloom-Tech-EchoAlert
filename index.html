@@ -16,6 +16,7 @@
         <span>Sibu Emergency Command Center</span>
       </div>
       <div class="system-health" aria-label="System health">
+        <span class="api-health"><i id="backend-dot"></i><span id="backend-state">API connecting</span></span>
         <span class="health-copy">Sensors online</span>
         <strong><span id="node-count">6</span> / 6</strong>
         <span class="online-dot" aria-hidden="true"></span>
@@ -176,7 +177,7 @@
         <section class="network-strip" aria-labelledby="network-title">
           <div class="network-heading">
             <div><span class="section-kicker">Time difference of arrival</span><h2 id="network-title">Sensor network telemetry</h2></div>
-            <div class="network-summary"><span id="locked-count">6</span> nodes locked · <span id="estimate-label">--</span></div>
+            <div class="network-summary"><span id="record-state">Persisted</span> · <span id="locked-count">6</span> nodes locked · <span id="estimate-label">--</span></div>
           </div>
           <div class="table-wrap">
             <table>

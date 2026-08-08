@@ -72,6 +72,13 @@ button { color: inherit; }
 .system-health { text-transform: uppercase; font-size: 11px; color: var(--muted); }
 .system-health strong { color: var(--green); letter-spacing: 0; }
 .online-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+.api-health { display: inline-flex; align-items: center; gap: 5px; margin-right: 7px; color: var(--muted); }
+.api-health i { width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); }
+.api-health.is-online { color: var(--green); }
+.api-health.is-online i { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.api-health.is-offline { color: var(--danger); }
+.api-health.is-offline i { background: var(--danger); }
+.primary-action:disabled, .dispatch-button:disabled { cursor: wait; opacity: 0.72; }
 
 .app-frame { display: grid; grid-template-columns: 50px minmax(0, 1fr); }
 
