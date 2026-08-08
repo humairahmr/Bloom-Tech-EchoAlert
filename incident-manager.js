@@ -1,6 +1,6 @@
 const STORAGE_KEY = "echoalert-operations-v3";
 const FINAL_STATES = new Set(["CONFIRMED_INCIDENT", "FALSE_ALARM", "CLOSED"]);
-const REVIEW_STATES = new Set(["AWAITING_HUMAN_DECISION", "REVIEW_MINIMISED", "MEDICAL_DISPATCHED_REVIEW_PENDING"]);
+const REVIEW_STATES = new Set(["AWAITING_HUMAN_DECISION", "REVIEW_MINIMISED", "MEDICAL_DISPATCHED_REVIEW_PENDING", "RESPONDER_ARRIVED_REVIEW_PENDING"]);
 const SEVERITY = { critical: 4, high: 3, medium: 2, low: 1 };
 
 export class IncidentManager {
@@ -34,6 +34,9 @@ export class IncidentManager {
       notes: "",
       decision: null,
       finalClassification: null,
+      reviewState: null,
+      responseState: "UNASSIGNED",
+      response: createResponse(),
       dispatchStatus: "NOT DISPATCHED",
       dispatchAt: null,
       assignedUnit: null,
@@ -43,6 +46,7 @@ export class IncidentManager {
       reviewScrollTop: 0,
       arrivalAt: null,
       ...input,
+      response: { ...createResponse(), ...(input.response || {}) },
       id
     };
     this.incidents.set(id, incident);
@@ -57,6 +61,7 @@ export class IncidentManager {
     const next = { ...incident, ...patch, updatedAt: new Date().toISOString() };
     if (patch.confidence) next.confidence = { ...incident.confidence, ...patch.confidence };
     if (patch.evidence) next.evidence = { ...incident.evidence, ...patch.evidence };
+    if (patch.response) next.response = { ...incident.response, ...patch.response };
     this.incidents.set(id, next);
     this.persist();
     return next;
@@ -78,7 +83,8 @@ export class IncidentManager {
     if (!incident || FINAL_STATES.has(incident.state)) return incident;
     this.openReviewId = null;
     return this.update(id, {
-      state: incident.assignedUnit ? "MEDICAL_DISPATCHED_REVIEW_PENDING" : "REVIEW_MINIMISED",
+      state: incident.response?.arrivalProcessed ? "RESPONDER_ARRIVED_REVIEW_PENDING" : incident.assignedUnit ? "MEDICAL_DISPATCHED_REVIEW_PENDING" : "REVIEW_MINIMISED",
+      reviewState: "AWAITING_HUMAN_DECISION",
       minimized: true,
       wasMinimized: true,
       reviewScrollTop: scrollTop
@@ -91,7 +97,8 @@ export class IncidentManager {
     this.selectedId = id;
     this.openReviewId = id;
     return this.update(id, {
-      state: incident.assignedUnit ? "MEDICAL_DISPATCHED_REVIEW_PENDING" : "AWAITING_HUMAN_DECISION",
+      state: incident.response?.arrivalProcessed ? "RESPONDER_ARRIVED_REVIEW_PENDING" : incident.assignedUnit ? "MEDICAL_DISPATCHED_REVIEW_PENDING" : "AWAITING_HUMAN_DECISION",
+      reviewState: "AWAITING_HUMAN_DECISION",
       minimized: false
     });
   }
@@ -120,13 +127,31 @@ export class IncidentManager {
   restore() {
     try {
       const saved = JSON.parse(this.storage?.getItem(STORAGE_KEY) || "null");
-      saved?.incidents?.forEach((incident) => this.incidents.set(incident.id, incident));
+      saved?.incidents?.forEach((incident) => this.incidents.set(incident.id, { ...incident, responseState: incident.responseState || "UNASSIGNED", response: { ...createResponse(), ...(incident.response || {}) } }));
       this.selectedId = saved?.selectedId || null;
       this.sequence = Math.max(saved?.sequence || 2046, ...this.list().map((item) => Number(item.id.match(/\d+/)?.[0]) || 0));
     } catch {
       this.incidents.clear();
     }
   }
+}
+
+function createResponse() {
+  return {
+    assignedUnitId: null,
+    dispatchedAt: null,
+    arrivedAt: null,
+    handedOverAt: null,
+    responseTimeMs: null,
+    handoverDurationMs: null,
+    originalEtaSeconds: 0,
+    actualArrivalSeconds: null,
+    arrivalProcessed: false,
+    handoverCompleted: false,
+    distanceTravelledMeters: 0,
+    routeRecalculations: 0,
+    finalRouteStatus: "Not dispatched"
+  };
 }
 
 function comparePriority(a, b) {

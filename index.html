@@ -163,12 +163,36 @@
               <div><span>Assigned incident</span><b id="nav-incident">--</b></div>
               <div><span>Route</span><b id="route-status">Fastest emergency route</b></div>
             </div>
-            <div id="arrival-summary" class="arrival-summary" hidden>
-              <div><span>Response time</span><strong id="response-time">--</strong></div>
-              <div><span>Distance travelled</span><strong id="distance-travelled">--</strong></div>
-              <div><span>Route changes</span><strong id="route-changes">0</strong></div>
-              <button id="handover-response" type="button">Hand Over to On-Scene Response</button>
-            </div>
+            <section id="arrival-summary" class="arrival-summary" role="dialog" aria-modal="true" aria-labelledby="arrival-headline" hidden>
+              <header class="arrival-summary-header">
+                <div><span id="arrival-status-label">Medical unit arrived</span><strong id="arrival-headline">MED-01 ON SCENE</strong></div>
+                <button id="minimise-arrival" type="button" aria-label="Minimise arrival summary">Minimise</button>
+              </header>
+              <div id="arrival-summary-body" class="arrival-summary-body" tabindex="0" aria-label="Arrival information">
+                <div><span>Incident</span><strong id="arrival-incident-id">--</strong></div>
+                <div><span>Unit</span><strong id="arrival-unit-id">--</strong></div>
+                <div><span>Unit type</span><strong id="arrival-unit-type">Medical</strong></div>
+                <div><span>Status</span><strong id="arrival-unit-status">ON SCENE</strong></div>
+                <div class="arrival-wide"><span>Location</span><strong id="arrival-location">--</strong></div>
+                <div><span>Dispatched</span><strong id="arrival-dispatched-at">--</strong></div>
+                <div><span>Arrived</span><strong id="arrival-arrived-at">--</strong></div>
+                <div><span>Original ETA</span><strong id="arrival-original-eta">--</strong></div>
+                <div><span>Actual response</span><strong id="response-time">--</strong></div>
+                <div><span>Distance travelled</span><strong id="distance-travelled">--</strong></div>
+                <div><span>Route changes</span><strong id="route-changes">0</strong></div>
+                <div><span>Route status</span><strong id="arrival-route-status">--</strong></div>
+                <div><span>Priority</span><strong id="arrival-priority">--</strong></div>
+                <div><span>Sensor fusion</span><strong id="arrival-fusion">--</strong></div>
+                <div><span>Medical classification</span><strong id="arrival-classification">--</strong></div>
+                <div><span>Police coordination</span><strong id="arrival-police">--</strong></div>
+                <div><span>Human review</span><strong id="arrival-review-status">--</strong></div>
+                <div id="handover-time-field" hidden><span>Handed over</span><strong id="handover-time">--</strong></div>
+                <div id="handover-duration-field" hidden><span>Arrival to handover</span><strong id="handover-duration">--</strong></div>
+                <section class="arrival-detail arrival-wide"><span>Arrival timeline</span><ol id="arrival-timeline"></ol></section>
+                <section class="arrival-detail arrival-wide"><span>On-scene notes</span><p id="arrival-notes">No dispatcher notes</p></section>
+              </div>
+              <footer class="arrival-summary-footer"><button id="handover-response" type="button">Hand Over to On-Scene Response</button></footer>
+            </section>
           </section>
         </section>
 

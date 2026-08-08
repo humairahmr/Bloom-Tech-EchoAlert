@@ -28,11 +28,12 @@ const CRASHED_PHASES = new Set([
   "NAVIGATING",
   "REROUTING",
   "RESPONDER_ARRIVED",
+  "ON_SCENE_RESPONSE",
   "CLEARED"
   ,"PEDESTRIAN_APPROACH","PEDESTRIAN_CONTACT","SUSPECT_FLEEING","VEHICLE_TRACKING","HUMAN_REVIEW_REQUIRED"
 ]);
 
-const NAVIGATION_PHASES = new Set(["ROUTE_CALCULATING", "DISPATCHED", "NAVIGATING", "REROUTING", "RESPONDER_ARRIVED"]);
+const NAVIGATION_PHASES = new Set(["ROUTE_CALCULATING", "DISPATCHED", "NAVIGATING", "REROUTING", "RESPONDER_ARRIVED", "ON_SCENE_RESPONSE"]);
 
 function material(color, options = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.12, ...options });
@@ -561,7 +562,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     mesh.position.set(position.x,0,position.z); mesh.rotation.y = position.rotation || 0;
     label.position.set(position.x,4.25,position.z);
     label.visible = !(state.activeNavigationUnit === unit.id && state.cameraMode === "responder" && !state.navigationMinimized);
-    const emergency = ["EN_ROUTE","ON_SCENE"].includes(unit.status);
+    const emergency = ["EN_ROUTE","ARRIVING","ON_SCENE"].includes(unit.status);
     mesh.userData.emergencyLights.forEach((bulb,index) => { const active = emergency && Math.floor(state.elapsed * 6)%2 === index; bulb.material.emissiveIntensity = active ? 5 : .05; mesh.userData.emergencyReflections[index].intensity = active ? 4 : 0; });
   }
 
@@ -571,7 +572,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     (state.incidents || []).forEach((incident) => {
       let marker = renderedIncidentMarkers.get(incident.id);
       if (!marker) { marker = new THREE.Mesh(new THREE.RingGeometry(1.3,1.72,36),new THREE.MeshBasicMaterial({color:COLORS.amber,transparent:true,opacity:.85,side:THREE.DoubleSide})); marker.rotation.x=-Math.PI/2; marker.position.y=.55; incidentMarkerGroup.add(marker); renderedIncidentMarkers.set(incident.id,marker); }
-      const color = incident.policeUnit ? 0x9b6dff : incident.assignedUnit ? COLORS.blue : ["CONFIRMED_INCIDENT","RESPONDER_ARRIVED"].includes(incident.state) ? COLORS.red : ["FALSE_ALARM","CLOSED"].includes(incident.state) ? 0x6d898e : COLORS.amber;
+      const color = incident.policeUnit ? 0x9b6dff : incident.assignedUnit ? COLORS.blue : ["CONFIRMED_INCIDENT","RESPONDER_ARRIVED","ON_SCENE_RESPONSE"].includes(incident.state) ? COLORS.red : ["FALSE_ALARM","CLOSED"].includes(incident.state) ? 0x6d898e : COLORS.amber;
       marker.position.x = incident.position?.x || 0; marker.position.z = incident.position?.z || 0; marker.material.color.setHex(color);
       marker.material.opacity = incident.minimized ? .45 + Math.sin(state.elapsed*6)*.25 : .88;
     });
@@ -626,7 +627,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     constructionSource.visible = state.activeScenario === "loud_noise" && suspected;
     if (constructionSource.visible) constructionBeacon.material.emissiveIntensity = 0.8 + Math.sin(state.elapsed * 14) * 0.7;
     if (renderedRouteVersion !== state.routeVersion) rebuildRoute(state);
-    const emergencyActive = state.units?.some((unit) => ["RESERVED","EN_ROUTE","ON_SCENE"].includes(unit.status)) || NAVIGATION_PHASES.has(state.phase);
+    const emergencyActive = state.units?.some((unit) => ["RESERVED","EN_ROUTE","ARRIVING","ON_SCENE"].includes(unit.status)) || NAVIGATION_PHASES.has(state.phase);
     routeGroup.visible = emergencyActive;
     blockedRouteGroup.visible = emergencyActive;
     routeGroup.children.forEach((child) => {
@@ -658,7 +659,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
       if (state.cameraMode === "topdown") {
         desiredTarget = ambulancePosition.clone();
         desiredPosition = ambulancePosition.clone().add(new THREE.Vector3(0, 32, 0.01));
-      } else if (state.cameraMode === "incident" || state.phase === "RESPONDER_ARRIVED") {
+      } else if (state.cameraMode === "incident" || ["ON_SCENE", "HANDOVER_COMPLETE"].includes(activeUnit.status) || state.phase === "RESPONDER_ARRIVED") {
         desiredTarget = new THREE.Vector3(selected?.x || 0, 0.8, selected?.z || 0);
         desiredPosition = desiredTarget.clone().add(new THREE.Vector3(18,19,20));
       } else {

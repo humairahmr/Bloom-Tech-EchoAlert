@@ -27,6 +27,7 @@ const PHASES = Object.freeze({
   NAVIGATING: "NAVIGATING",
   REROUTING: "REROUTING",
   RESPONDER_ARRIVED: "RESPONDER_ARRIVED",
+  ON_SCENE_RESPONSE: "ON_SCENE_RESPONSE",
   CLEARED: "CLEARED"
   ,PEDESTRIAN_APPROACH: "PEDESTRIAN_APPROACH"
   ,PEDESTRIAN_CONTACT: "PEDESTRIAN_CONTACT"
@@ -44,10 +45,12 @@ const SCENARIOS = Object.freeze({
 });
 
 const NAVIGATION_PHASES = new Set([PHASES.ROUTE_CALCULATING, PHASES.NAVIGATING, PHASES.REROUTING, PHASES.RESPONDER_ARRIVED]);
+const ACTIVE_UNIT_STATES = new Set(["RESERVED", "EN_ROUTE", "ARRIVING", "ON_SCENE", "HANDOVER_COMPLETE"]);
 const VERIFICATION_WINDOW_MS = 1500;
 const $ = (selector) => document.querySelector(selector);
 const incidentManager = new IncidentManager();
 const unitManager = new UnitManager();
+incidentManager.list().forEach((incident) => unitManager.restoreCompletedResponse(incident));
 
 const model = {
   phase: PHASES.NORMAL,
@@ -220,6 +223,30 @@ const elements = {
   collapseMap: $("#collapse-nav-map"),
   cameraButtons: [...document.querySelectorAll("[data-camera-mode]")],
   arrivalSummary: $("#arrival-summary"),
+  arrivalSummaryBody: $("#arrival-summary-body"),
+  arrivalMinimise: $("#minimise-arrival"),
+  arrivalReviewStatus: $("#arrival-review-status"),
+  arrivalTimeline: $("#arrival-timeline"),
+  arrivalNotes: $("#arrival-notes"),
+  arrivalStatusLabel: $("#arrival-status-label"),
+  arrivalHeadline: $("#arrival-headline"),
+  arrivalIncidentId: $("#arrival-incident-id"),
+  arrivalUnitId: $("#arrival-unit-id"),
+  arrivalUnitType: $("#arrival-unit-type"),
+  arrivalUnitStatus: $("#arrival-unit-status"),
+  arrivalLocation: $("#arrival-location"),
+  arrivalDispatchedAt: $("#arrival-dispatched-at"),
+  arrivalArrivedAt: $("#arrival-arrived-at"),
+  arrivalOriginalEta: $("#arrival-original-eta"),
+  arrivalRouteStatus: $("#arrival-route-status"),
+  arrivalPriority: $("#arrival-priority"),
+  arrivalFusion: $("#arrival-fusion"),
+  arrivalClassification: $("#arrival-classification"),
+  arrivalPolice: $("#arrival-police"),
+  handoverTimeField: $("#handover-time-field"),
+  handoverTime: $("#handover-time"),
+  handoverDurationField: $("#handover-duration-field"),
+  handoverDuration: $("#handover-duration"),
   responseTime: $("#response-time"),
   distanceTravelled: $("#distance-travelled"),
   routeChanges: $("#route-changes"),
@@ -242,6 +269,9 @@ async function api(path, options = {}) {
 }
 
 function phaseCopy() {
+  const responseUnit = unitManager.get(model.activeNavigationUnit);
+  if (responseUnit?.status === "HANDOVER_COMPLETE") return ["ON-SCENE TEAM HAS ASSUMED RESPONSE", `${responseUnit.id} completed handover without closing the incident`, "On-scene response", "Scene monitored", "Scene monitored", "Handover complete", "response"];
+  if (responseUnit?.status === "ON_SCENE") return ["MEDICAL UNIT ARRIVED", `${responseUnit.id} is safely positioned beside ${responseUnit.assignedIncident}`, "Responder arrived", "Scene monitored", "Scene monitored", "Response active", "response"];
   const scenario = model.activeScenario;
   const pedestrian = {
     [PHASES.PEDESTRIAN_APPROACH]: ["CONFLICT PREDICTED", "CCTV #04 is tracking PEDESTRIAN-02 and VEHICLE-07", "Road-user conflict", "Road-user conflict predicted", "Listening", "Timeline monitoring", "suspected"],
@@ -259,6 +289,7 @@ function phaseCopy() {
     [PHASES.NAVIGATING]: ["MED-01 EN ROUTE", "Emergency corridor activated; civilian traffic yielding", "Responder navigation", "Scene monitored", "Scene monitored", "Response active", "response"],
     [PHASES.REROUTING]: ["ROAD BLOCK DETECTED", "Ambulance stopped safely while A* calculates an alternative", "Dynamic rerouting", "Scene monitored", "Scene monitored", "Route recalculation", "suspected"],
     [PHASES.RESPONDER_ARRIVED]: ["MEDICAL UNIT ARRIVED", "MED-01 is safely positioned beside the incident", "Responder arrived", "Scene monitored", "Scene monitored", "Response active", "response"],
+    [PHASES.ON_SCENE_RESPONSE]: ["ON-SCENE TEAM HAS ASSUMED RESPONSE", "Medical handover is complete; incident closure remains separate", "On-scene response", "Scene monitored", "Scene monitored", "Handover complete", "response"],
     [PHASES.CLEARED]: ["EVENT CLEARED", "No emergency response is required", "Cleared", "Monitoring resumed", "Listening resumed", "Cleared", "normal"]
   };
   if (common[model.phase]) return common[model.phase];
@@ -314,7 +345,7 @@ function setPhase(nextPhase) {
   if (nextPhase === PHASES.HUMAN_REVIEW_REQUIRED) {
     const incident = incidentManager.get(model.selectedIncidentId);
     if (incident) {
-      incidentManager.update(incident.id, { state: "AWAITING_HUMAN_DECISION", minimized: false });
+      incidentManager.update(incident.id, { state: "AWAITING_HUMAN_DECISION", reviewState: "AWAITING_HUMAN_DECISION", minimized: false });
       syncOperationsState();
       openPedestrianReview(incident.id);
     }
@@ -346,13 +377,23 @@ function updatePhaseUi() {
   elements.mapStatus.textContent = model.phase === PHASES.NORMAL ? "Standby" : phase;
   elements.mapStatus.style.color = tone === "critical" ? "var(--red)" : tone === "suspected" ? "var(--amber)" : tone === "cleared" ? "var(--cyan)" : "var(--green)";
   const activeUnit = unitManager.get(model.activeNavigationUnit);
-  const managedNavigation = activeUnit && ["RESERVED", "EN_ROUTE", "ON_SCENE"].includes(activeUnit.status);
+  const managedNavigation = activeUnit && ACTIVE_UNIT_STATES.has(activeUnit.status);
   const navigating = (NAVIGATION_PHASES.has(model.phase) || managedNavigation) && !model.navigationMinimized;
   elements.navigationHud.classList.toggle("is-active", navigating);
+  elements.navigationHud.classList.toggle("is-handover-complete", activeUnit?.status === "HANDOVER_COMPLETE");
   elements.navigationHud.setAttribute("aria-hidden", String(!navigating));
   elements.operations.dataset.navigationActive = String(navigating);
   elements.unitState.textContent = activeUnit ? `${activeUnit.id} ${activeUnit.status.replaceAll("_", " ").toLowerCase()}` : model.phase === PHASES.RESPONDER_ARRIVED ? "MED-01 on scene" : navigating ? "MED-01 dispatched" : "MED-01 / MED-02 available";
-  elements.arrivalSummary.hidden = activeUnit ? activeUnit.status !== "ON_SCENE" : model.phase !== PHASES.RESPONDER_ARRIVED;
+  const responseIncident = activeUnit ? incidentManager.get(activeUnit.assignedIncident) : null;
+  const showArrival = Boolean(activeUnit && ["ON_SCENE", "HANDOVER_COMPLETE"].includes(activeUnit.status) && responseIncident?.response?.arrivalProcessed && !model.navigationMinimized && !model.modalOpen);
+  const arrivalWasOpen = elements.body.classList.contains("arrival-open");
+  elements.arrivalSummary.hidden = !showArrival;
+  elements.body.classList.toggle("arrival-open", showArrival);
+  elements.navigationHud.classList.toggle("has-arrival", showArrival);
+  if (showArrival) {
+    renderArrivalSummary(responseIncident, activeUnit);
+    if (!arrivalWasOpen) requestAnimationFrame(() => elements.arrivalSummaryBody.focus());
+  }
   const routeRemaining = model.route ? model.route.totalDistance - model.routeDistance : 0;
   elements.roadBlock.disabled = model.phase !== PHASES.NAVIGATING || model.routeChanges > 0 || routeRemaining < 70;
   elements.simulateSecond.hidden = incidentManager.pendingReviews().length === 0;
@@ -873,23 +914,34 @@ function completePedestrianFalseAlarm() {
 function dispatchPedestrian(keepPending) {
   const incident = incidentManager.get(model.selectedIncidentId);
   if (!incident) return null;
-  let unit = incident.assignedUnit ? unitManager.get(incident.assignedUnit) : unitManager.assignMedical(incident.id, model.blockedSegments);
+  const existingUnit = incident.assignedUnit ? unitManager.get(incident.assignedUnit) : null;
+  if (!keepPending && existingUnit && incident.response?.arrivalProcessed) {
+    incidentManager.update(incident.id, {
+      state: incident.response.handoverCompleted ? "ON_SCENE_RESPONSE" : "RESPONDER_ARRIVED",
+      reviewState: "CONFIRMED",
+      decision: "Incident confirmed by dispatcher",
+      finalClassification: "Suspected pedestrian collision",
+      dispatchStatus: incident.response.handoverCompleted ? `${existingUnit.id} HANDOVER COMPLETE` : `${existingUnit.id} ON SCENE`
+    });
+    addIncidentTimelineOnce(incident.id, "Human classification completed after medical arrival", new Date().toISOString());
+    addManagedHistory(incident.id);
+    closeEvidenceModal();
+    openArrivalForIncident(incident.id);
+    showToast("Classification confirmed - medical response state preserved");
+    return existingUnit;
+  }
+  const unit = startMedicalResponse(incident, {
+    keepReview: keepPending,
+    decision: keepPending ? null : "Incident confirmed by dispatcher",
+    classification: keepPending ? null : "Suspected pedestrian collision"
+  });
   if (!unit) {
     incidentManager.update(incident.id, { dispatchStatus: "NO IMMEDIATE MEDICAL UNIT AVAILABLE", evidence: { dispatchQueued: true } });
     configurePedestrianEvidence();
     showToast("NO IMMEDIATE MEDICAL UNIT AVAILABLE - incident added to dispatch queue");
     return null;
   }
-  unitManager.dispatch(unit.id);
-  incidentManager.update(incident.id, { state: keepPending ? "MEDICAL_DISPATCHED_REVIEW_PENDING" : "CONFIRMED_INCIDENT", decision: keepPending ? null : "Incident confirmed by dispatcher", finalClassification: keepPending ? null : "Suspected pedestrian collision", assignedUnit: unit.id, dispatchAt: new Date().toISOString(), dispatchStatus: keepPending ? "MEDICAL DISPATCHED - CLASSIFICATION PENDING" : `${unit.id} DISPATCHED` });
-  model.activeNavigationUnit = unit.id;
   model.navigationMinimized = keepPending;
-  model.route = unit.route;
-  model.routePoints = unit.route.points;
-  model.routeSegments = unit.route.segments;
-  model.routeVersion += 1;
-  model.routeStartedAt = new Date(unit.startedAt);
-  syncActiveUnit(true);
   syncOperationsState();
   if (keepPending) {
     configurePedestrianEvidence();
@@ -902,6 +954,37 @@ function dispatchPedestrian(keepPending) {
     updatePhaseUi();
     showToast("INCIDENT CONFIRMED");
   }
+  return unit;
+}
+
+function startMedicalResponse(incident, { keepReview = false, decision = null, classification = null } = {}) {
+  let unit = incident.assignedUnit ? unitManager.get(incident.assignedUnit) : unitManager.assignMedical(incident.id, model.blockedSegments);
+  if (!unit) return null;
+  unitManager.dispatch(unit.id);
+  const dispatchAt = unit.dispatchedAt || new Date().toISOString();
+  incidentManager.update(incident.id, {
+    state: keepReview ? "MEDICAL_DISPATCHED_REVIEW_PENDING" : "RESPONDER_EN_ROUTE",
+    reviewState: keepReview ? (incident.reviewState || "AWAITING_HUMAN_DECISION") : "CONFIRMED",
+    responseState: "RESPONDER_EN_ROUTE",
+    decision,
+    finalClassification: classification,
+    assignedUnit: unit.id,
+    dispatchAt,
+    dispatchStatus: keepReview ? "MEDICAL DISPATCHED - CLASSIFICATION PENDING" : `${unit.id} EN ROUTE`,
+    response: {
+      assignedUnitId: unit.id,
+      dispatchedAt: dispatchAt,
+      originalEtaSeconds: unit.originalEtaSeconds,
+      finalRouteStatus: "Emergency route active"
+    }
+  });
+  model.activeNavigationUnit = unit.id;
+  model.route = unit.route;
+  model.routePoints = unit.route.points;
+  model.routeSegments = unit.route.segments;
+  model.routeVersion += 1;
+  model.routeStartedAt = new Date(dispatchAt);
+  syncActiveUnit(true);
   return unit;
 }
 
@@ -987,14 +1070,10 @@ async function dispatchAmbulance() {
   if (!model.currentIncident || model.phase !== PHASES.CRITICAL_CONFIRMED) return;
   const managed = incidentManager.get(model.currentIncident.id);
   if (managed) {
-    const unit = unitManager.assignMedical(managed.id, model.blockedSegments);
+    const unit = startMedicalResponse(managed, { decision: "Confirmed multi-sensor collision", classification: managed.finalClassification || "Confirmed vehicle collision" });
     if (!unit) { showToast("NO IMMEDIATE MEDICAL UNIT AVAILABLE"); return; }
-    unitManager.dispatch(unit.id);
-    incidentManager.update(managed.id, { assignedUnit: unit.id, state: "CONFIRMED_INCIDENT", decision: "Confirmed multi-sensor collision", dispatchAt: new Date().toISOString(), dispatchStatus: `${unit.id} DISPATCHED` });
-    model.activeNavigationUnit = unit.id;
     model.navigationMinimized = false;
     closeEvidenceModal();
-    syncActiveUnit(true);
     syncOperationsState();
     model.phase = PHASES.NAVIGATING;
     updatePhaseUi();
@@ -1010,18 +1089,37 @@ async function persistDispatchAndNavigate(humanOverride) {
   try {
     const result = await api(`/api/incidents/${encodeURIComponent(model.currentIncident.id)}/dispatch`, { method: "POST", body: JSON.stringify({ unit: "MED-01 - Medical Tier 1" }) });
     model.currentIncident = result.incident;
+    let incident = incidentManager.get(result.incident.id);
+    if (!incident) {
+      incident = incidentManager.create({
+        id: result.incident.id,
+        type: "vehicle-collision",
+        title: "Confirmed Vehicle Collision",
+        state: "CONFIRMED_INCIDENT",
+        severity: "critical",
+        cameraIds: ["CCTV #04"],
+        location: "Jalan Awang Ramli Amit - Intersection 4",
+        coordinates: { latitude: result.incident.latitude || 2.2913, longitude: result.incident.longitude || 111.8291 },
+        position: { x: 0, z: 0, mapX: 600, mapY: 360 },
+        detectedAt: result.incident.detectedAt || new Date().toISOString(),
+        confidence: { vision: .996, audio: .998, fusion: result.incident.confidence || .995 },
+        evidence: { vehicleId: "VEH-214 / VEH-927" },
+        decision: humanOverride ? "Human confirmed incident" : "Confirmed multi-sensor collision",
+        finalClassification: "Confirmed vehicle collision",
+        reviewState: "CONFIRMED"
+      });
+    }
+    const unit = startMedicalResponse(incident, { decision: humanOverride ? "Human confirmed incident" : "Confirmed multi-sensor collision", classification: "Confirmed vehicle collision" });
+    if (!unit) throw new Error("NO IMMEDIATE MEDICAL UNIT AVAILABLE");
     closeEvidenceModal();
     model.blockedSegments.clear();
     model.blockedRoutePoints = [];
-    model.routeChanges = 0;
-    model.completedDistance = 0;
     model.routeTone = "planned";
-    model.pendingRoute = findFastestRoute("S", "D", model.blockedSegments);
-    model.routeStartedAt = new Date();
     model.arrivalIso = null;
-    elements.etaLabel.textContent = "CALC";
     upsertHistory({ decision: humanOverride ? "Human confirmed incident" : "Medical Tier 1 approved", dispatch: "MED-01 dispatched", fusion: humanOverride ? "Human override" : "Confirmed collision" });
-    setPhase(PHASES.ROUTE_CALCULATING);
+    model.navigationMinimized = false;
+    syncOperationsState();
+    setPhase(PHASES.NAVIGATING);
   } catch (error) {
     elements.dispatch.disabled = false;
     elements.dispatch.textContent = model.modalMode === "review" ? "Confirm Incident and Dispatch" : "Dispatch Medical Tier 1";
@@ -1075,6 +1173,7 @@ function updateNavigation(delta) {
 
 function updateNavigationHud(remaining) {
   const instruction = model.navigationInstruction;
+  const activeUnit = unitManager.get(model.activeNavigationUnit);
   const arrows = { UP: "↑", LEFT: "←", RIGHT: "→", PIN: "◆" };
   elements.navArrow.textContent = arrows[instruction.arrow] || "↑";
   elements.navManoeuvre.textContent = instruction.manoeuvre;
@@ -1083,7 +1182,9 @@ function updateNavigationHud(remaining) {
   elements.navEta.textContent = formatDuration(model.etaSeconds);
   elements.navRemaining.textContent = `${Math.round(remaining)} m`;
   elements.etaLabel.textContent = formatDuration(model.etaSeconds);
-  elements.guidance.textContent = remaining < 55 ? (remaining < 15 ? "Arriving at the incident on your right" : "Incident ahead in 50 metres") : `${instruction.manoeuvre} for ${Math.round(instruction.distance)} metres`;
+  elements.guidance.textContent = ["ON_SCENE", "HANDOVER_COMPLETE"].includes(activeUnit?.status)
+    ? (activeUnit.status === "HANDOVER_COMPLETE" ? "On-scene team has assumed response" : "Arrived at incident location")
+    : remaining < 55 ? (remaining < 15 ? "Arriving at the incident on your right" : "Incident ahead in 50 metres") : `${instruction.manoeuvre} for ${Math.round(instruction.distance)} metres`;
   updatePhaseUi();
 }
 
@@ -1096,6 +1197,8 @@ function simulateRoadBlock() {
     model.blockedSegments.add(segmentKey(upcoming.from, upcoming.to));
     model.blockedRoutePoints = [[ROAD_NODES[upcoming.from], ROAD_NODES[upcoming.to]]];
     unitManager.reroute(managed.id, upcoming.from, model.blockedSegments);
+    const incident = incidentManager.get(managed.assignedIncident);
+    if (incident) incidentManager.update(incident.id, { response: { routeRecalculations: managed.routeChanges, finalRouteStatus: "Alternative route active" } });
     model.routeTone = "alternative";
     syncActiveUnit(true);
     elements.routeStatus.textContent = "Alternative route active";
@@ -1119,6 +1222,8 @@ function simulateRoadBlock() {
 }
 
 function completeArrival() {
+  const managedUnit = unitManager.get(model.activeNavigationUnit);
+  if (managedUnit) return completeUnitArrival(managedUnit.id, managedUnit.assignedIncident);
   model.arrivalIso = new Date().toISOString();
   model.responderSpeedMps = 0;
   model.vehicleSpeed = 0;
@@ -1137,9 +1242,28 @@ function completeArrival() {
 }
 
 function handOverResponse() {
-  if (model.phase !== PHASES.RESPONDER_ARRIVED) return;
-  upsertHistory({ decision: "Handed over on scene", dispatch: "Response active" });
-  setPhase(PHASES.CLEARED);
+  const unit = unitManager.get(model.activeNavigationUnit);
+  const incident = unit ? incidentManager.get(unit.assignedIncident) : null;
+  if (!unit || !incident || unit.type !== "medical" || unit.status !== "ON_SCENE" || !incident.response?.arrivalProcessed || incident.response.handoverCompleted) return;
+  const handedOverAt = new Date().toISOString();
+  const handover = unitManager.completeHandover(unit.id, handedOverAt);
+  if (!handover.processed) return;
+  const handoverDurationMs = Math.max(0, new Date(handedOverAt) - new Date(incident.response.arrivedAt));
+  const reviewPending = incident.reviewState === "AWAITING_HUMAN_DECISION";
+  incidentManager.update(incident.id, {
+    state: reviewPending ? "RESPONDER_ARRIVED_REVIEW_PENDING" : "ON_SCENE_RESPONSE",
+    responseState: "ON_SCENE_RESPONSE",
+    dispatchStatus: `${unit.id} HANDOVER COMPLETE`,
+    response: { handedOverAt, handoverDurationMs, handoverCompleted: true, finalRouteStatus: "On-scene handover complete" }
+  });
+  addIncidentTimelineOnce(incident.id, `${unit.id} handover completed`, handedOverAt);
+  addManagedHistory(incident.id);
+  syncActiveUnit(true);
+  syncOperationsState();
+  model.phase = PHASES.ON_SCENE_RESPONSE;
+  elements.body.dataset.simulationState = model.phase;
+  updatePhaseUi();
+  showToast(`${unit.id} handover complete at ${incident.id}`);
 }
 
 function setCrashedVehiclePose() {
@@ -1303,22 +1427,103 @@ function syncActiveUnit(forceRoute = false) {
 }
 
 function handleManagedArrival(unit) {
-  const incident = incidentManager.get(unit.assignedIncident);
-  if (incident) {
-    incidentManager.update(incident.id, { state: incident.decision ? "CONFIRMED_INCIDENT" : "MEDICAL_DISPATCHED_REVIEW_PENDING", dispatchStatus: `${unit.id} ON SCENE`, arrivalAt: unit.arrivedAt });
-    if (incident.decision) addManagedHistory(incident.id);
+  completeUnitArrival(unit.id, unit.assignedIncident);
+}
+
+function completeUnitArrival(unitId, incidentId) {
+  const unit = unitManager.get(unitId);
+  const incident = incidentManager.get(incidentId);
+  if (!unit || !incident || unit.type !== "medical" || unit.assignedIncident !== incident.id) return false;
+  if (!unit.arrivalProcessed) unitManager.completeArrival(unit.id);
+  if (incident.response?.arrivalProcessed) return false;
+  const arrivedAt = unit.arrivedAt || new Date().toISOString();
+  const dispatchedAt = unit.dispatchedAt || incident.response?.dispatchedAt || incident.dispatchAt;
+  const responseTimeMs = dispatchedAt ? Math.max(0, new Date(arrivedAt) - new Date(dispatchedAt)) : 0;
+  const distanceTravelledMeters = Math.round(unit.completedDistance + unit.routeDistance);
+  const reviewPending = incident.reviewState === "AWAITING_HUMAN_DECISION";
+  incidentManager.update(incident.id, {
+    state: reviewPending ? "RESPONDER_ARRIVED_REVIEW_PENDING" : "RESPONDER_ARRIVED",
+    responseState: "RESPONDER_ARRIVED",
+    dispatchStatus: `${unit.id} ON SCENE`,
+    arrivalAt: arrivedAt,
+    response: {
+      assignedUnitId: unit.id,
+      dispatchedAt,
+      arrivedAt,
+      responseTimeMs,
+      actualArrivalSeconds: Math.round(responseTimeMs / 1000),
+      arrivalProcessed: true,
+      distanceTravelledMeters,
+      routeRecalculations: unit.routeChanges,
+      finalRouteStatus: unit.routeChanges ? "Alternative route completed" : "Fastest route completed"
+    }
+  });
+  addIncidentTimelineOnce(incident.id, `${unit.id} arrived at incident location`, arrivedAt);
+  addManagedHistory(incident.id);
+  const arrivalIsSelected = model.selectedIncidentId === incident.id || model.currentIncident?.id === incident.id;
+  if (unit.id === model.activeNavigationUnit && (arrivalIsSelected || !model.modalOpen)) {
+    model.arrivalIso = arrivedAt;
+    model.phase = PHASES.RESPONDER_ARRIVED;
+    elements.body.dataset.simulationState = model.phase;
   }
-  if (unit.id === model.activeNavigationUnit) {
-    elements.arrivalTime.textContent = formatTime(unit.arrivedAt);
-    elements.etaLabel.textContent = "ARRIVED";
-    elements.navSpeed.textContent = "0 km/h";
-  }
+  if (unit.id === model.activeNavigationUnit) syncActiveUnit(true);
   syncOperationsState();
+  updatePhaseUi();
+  if (model.navigationMinimized || model.selectedIncidentId !== incident.id) showToast(`${unit.id} has arrived at ${incident.id}`);
+  return true;
+}
+
+function addIncidentTimelineOnce(incidentId, label, at) {
+  const incident = incidentManager.get(incidentId);
+  if (!incident || incident.timeline.some((event) => event.label === label)) return false;
+  incidentManager.addTimeline(incidentId, label, at);
+  return true;
+}
+
+function renderArrivalSummary(incident, unit) {
+  const response = incident.response || {};
+  const handoverComplete = Boolean(response.handoverCompleted);
+  elements.arrivalStatusLabel.textContent = handoverComplete ? "On-scene response active" : "Medical unit arrived";
+  elements.arrivalHeadline.textContent = handoverComplete ? `${unit.id} HANDOVER COMPLETE` : `${unit.id} ON SCENE`;
+  elements.arrivalIncidentId.textContent = incident.id;
+  elements.arrivalUnitId.textContent = unit.id;
+  elements.arrivalUnitType.textContent = unit.type === "medical" ? "Medical Tier 1" : unit.type;
+  elements.arrivalUnitStatus.textContent = unit.status.replaceAll("_", " ");
+  elements.arrivalLocation.textContent = incident.location;
+  elements.arrivalDispatchedAt.textContent = formatTime(response.dispatchedAt);
+  elements.arrivalArrivedAt.textContent = formatTime(response.arrivedAt);
+  elements.arrivalOriginalEta.textContent = formatDuration(response.originalEtaSeconds);
+  elements.responseTime.textContent = formatDuration((response.responseTimeMs || 0) / 1000);
+  elements.distanceTravelled.textContent = `${Math.round(response.distanceTravelledMeters || 0)} m`;
+  elements.routeChanges.textContent = String(response.routeRecalculations || 0);
+  elements.arrivalRouteStatus.textContent = response.finalRouteStatus || "Route complete";
+  elements.arrivalPriority.textContent = incident.severity;
+  elements.arrivalFusion.textContent = percent(incident.confidence?.fusion);
+  elements.arrivalClassification.textContent = incident.reviewState === "AWAITING_HUMAN_DECISION" ? "Human review pending" : incident.finalClassification || "Confirmed critical incident";
+  elements.arrivalPolice.textContent = incident.policeUnit ? `${incident.policeUnit} ${unitManager.get(incident.policeUnit)?.status?.replaceAll("_", " ") || "REQUESTED"}` : "Not requested";
+  elements.arrivalReviewStatus.textContent = incident.reviewState === "AWAITING_HUMAN_DECISION" ? "Awaiting human decision" : incident.reviewState === "CONFIRMED" ? "Classification confirmed" : "Not required";
+  const timelineSignature = incident.timeline.map((event) => `${event.at}:${event.label}`).join("|");
+  if (elements.arrivalTimeline.dataset.signature !== timelineSignature) {
+    elements.arrivalTimeline.dataset.signature = timelineSignature;
+    elements.arrivalTimeline.innerHTML = "";
+    incident.timeline.slice(-6).forEach((event) => {
+      const item = document.createElement("li");
+      item.textContent = `${formatTime(event.at)} - ${event.label}`;
+      elements.arrivalTimeline.appendChild(item);
+    });
+  }
+  elements.arrivalNotes.textContent = incident.notes || "No dispatcher notes";
+  elements.handoverTimeField.hidden = !handoverComplete;
+  elements.handoverDurationField.hidden = !handoverComplete;
+  elements.handoverTime.textContent = formatTime(response.handedOverAt);
+  elements.handoverDuration.textContent = formatDuration((response.handoverDurationMs || 0) / 1000);
+  elements.handover.disabled = handoverComplete || unit.status !== "ON_SCENE";
+  elements.handover.textContent = handoverComplete ? "Handover Complete" : "Hand Over to On-Scene Response";
 }
 
 function renderResponderCard(unit = unitManager.get(model.activeNavigationUnit)) {
   const legacyNavigation = !unit && model.currentIncident && NAVIGATION_PHASES.has(model.phase);
-  const visible = model.navigationMinimized && (legacyNavigation || Boolean(unit && ["RESERVED", "EN_ROUTE", "ON_SCENE"].includes(unit.status)));
+  const visible = model.navigationMinimized && (legacyNavigation || Boolean(unit && ACTIVE_UNIT_STATES.has(unit.status)));
   elements.responderCard.hidden = !visible;
   if (!visible) return;
   if (legacyNavigation) {
@@ -1329,7 +1534,9 @@ function renderResponderCard(unit = unitManager.get(model.activeNavigationUnit))
   }
   const remaining = Math.max(0, (unit.route?.totalDistance || 0) - unit.routeDistance);
   elements.responderCardUnit.textContent = unit.id;
+  const arrived = ["ON_SCENE", "HANDOVER_COMPLETE"].includes(unit.status);
   elements.responderCardCopy.textContent = `${unit.id} -> ${unit.assignedIncident} - ETA ${formatDuration(unit.etaSeconds)} - ${unit.status.replaceAll("_", " ")} - ${Math.round(remaining)} m`;
+  elements.restoreNavigation.textContent = arrived ? "View Arrival" : "Return to Navigation";
 }
 
 function renderReviewQueue() {
@@ -1341,7 +1548,8 @@ function renderReviewQueue() {
   pending.forEach((incident) => {
     const card = document.createElement("article");
     card.className = "review-item";
-    card.innerHTML = `<header><strong>${escapeHtml(incident.id)}</strong><span>${escapeHtml(incident.severity)}</span></header><p>${escapeHtml(incident.title)}<br>${escapeHtml(incident.location)}<br>${formatTime(incident.detectedAt)}</p><dl><div><dt>Waiting</dt><dd>${formatWaiting(incident.detectedAt)}</dd></div><div><dt>Fusion</dt><dd>${percent(incident.confidence.fusion)}</dd></div><div><dt>Units</dt><dd>${escapeHtml(incident.assignedUnit || "None")} / ${escapeHtml(incident.policeUnit || "No police")}</dd></div></dl><button type="button" data-open-incident="${escapeHtml(incident.id)}">Reopen Review</button>`;
+    const arrivalAction = incident.response?.arrivalProcessed ? `<button type="button" data-view-arrival="${escapeHtml(incident.id)}">View Arrival</button>` : "";
+    card.innerHTML = `<header><strong>${escapeHtml(incident.id)}</strong><span>${escapeHtml(incident.severity)}</span></header><p>${escapeHtml(incident.title)}<br>${escapeHtml(incident.location)}<br>${formatTime(incident.detectedAt)}</p><dl><div><dt>Waiting</dt><dd>${formatWaiting(incident.detectedAt)}</dd></div><div><dt>Fusion</dt><dd>${percent(incident.confidence.fusion)}</dd></div><div><dt>Units</dt><dd>${escapeHtml(incident.assignedUnit || "None")} / ${escapeHtml(incident.policeUnit || "No police")}</dd></div></dl><div class="review-item-actions"><button type="button" data-open-incident="${escapeHtml(incident.id)}">Reopen Review</button>${arrivalAction}</div>`;
     elements.reviewQueueList.appendChild(card);
   });
 }
@@ -1437,6 +1645,7 @@ function openManagedIncident(id) {
   if (incident.type === "suspected-pedestrian-hit-and-run") return openPedestrianReview(id);
   incidentManager.select(id);
   model.selectedIncidentId = id;
+  if (incident.response?.arrivalProcessed && incident.assignedUnit) return openArrivalForIncident(id);
   model.currentIncident = incidentToModalRecord(incident);
   model.activeScenario = "confirmed";
   model.impactIso = incident.detectedAt;
@@ -1444,19 +1653,42 @@ function openManagedIncident(id) {
   openEvidenceModal("critical");
 }
 
+function openArrivalForIncident(id) {
+  const incident = incidentManager.get(id);
+  const unit = incident ? unitManager.get(incident.assignedUnit) : null;
+  if (!incident?.response?.arrivalProcessed || !unit) return false;
+  incidentManager.select(id);
+  model.selectedIncidentId = id;
+  model.activeNavigationUnit = unit.id;
+  model.navigationMinimized = false;
+  model.cctvWorkspaceOpen = false;
+  model.phase = incident.response.handoverCompleted ? PHASES.ON_SCENE_RESPONSE : PHASES.RESPONDER_ARRIVED;
+  elements.body.dataset.simulationState = model.phase;
+  closeEvidenceModal();
+  elements.reviewQueue.classList.remove("is-open");
+  syncActiveUnit(true);
+  renderCctvWorkspace();
+  updatePhaseUi();
+  return true;
+}
+
 function addManagedHistory(id) {
   const incident = incidentManager.get(id);
   if (!incident) return;
   const pendingSeconds = Math.round(((incident.dispatchAt ? new Date(incident.dispatchAt) : new Date()) - new Date(incident.detectedAt)) / 1000);
   const reviewAudit = incident.wasMinimized ? `; minimised review; pending ${formatDuration(pendingSeconds)}` : "";
+  const response = incident.response || {};
+  const responseSummary = response.handoverCompleted
+    ? `Arrived ${formatTime(response.arrivedAt)}; handover ${formatTime(response.handedOverAt)}`
+    : response.arrivalProcessed ? `Arrived ${formatTime(response.arrivedAt)} in ${formatDuration((response.responseTimeMs || 0) / 1000)}` : "--";
   upsertHistory({
     id,
     time: formatTime(incident.detectedAt),
     location: incident.location,
     trigger: incident.title,
-    decision: `${incident.decision || incident.finalClassification || "Review pending"}${reviewAudit}`,
+    decision: `${response.handoverCompleted ? "On-scene handover complete" : incident.decision || incident.finalClassification || "Review pending"}${reviewAudit}`,
     dispatch: `${incident.assignedUnit || "No unit"} after ${formatDuration(pendingSeconds)}`,
-    response: incident.arrivalAt ? `Arrived ${formatTime(incident.arrivalAt)}` : "--",
+    response: responseSummary,
     notes: incident.notes || "--",
     fusion: percent(incident.confidence.fusion),
     vision: percent(incident.confidence.vision),
@@ -1631,12 +1863,34 @@ function resetSelectedIncident() {
   incidentManager.remove(incident.id);
   if (model.currentIncident?.id === incident.id) closeEvidenceModal();
   const active = unitManager.get(model.activeNavigationUnit);
-  if (!active?.assignedIncident) model.activeNavigationUnit = unitManager.list().find((unit) => unit.status === "EN_ROUTE")?.id || null;
+  if (!active?.assignedIncident) model.activeNavigationUnit = unitManager.list().find((unit) => ["RESERVED", "EN_ROUTE", "ARRIVING", "ON_SCENE", "HANDOVER_COMPLETE"].includes(unit.status))?.id || null;
   if (incident.vulnerableRoadUser) model.pedestrian.visible = false;
-  model.phase = PHASES.NORMAL;
   model.currentIncident = null;
-  syncActiveUnit(true);
+  const nextUnit = unitManager.get(model.activeNavigationUnit);
+  if (nextUnit?.assignedIncident) {
+    model.phase = nextUnit.status === "HANDOVER_COMPLETE" ? PHASES.ON_SCENE_RESPONSE : nextUnit.status === "ON_SCENE" ? PHASES.RESPONDER_ARRIVED : PHASES.NAVIGATING;
+    syncActiveUnit(true);
+  } else {
+    model.phase = PHASES.NORMAL;
+    model.route = null;
+    model.routePoints = [];
+    model.routeSegments = [];
+    model.routeDistance = 0;
+    model.completedDistance = 0;
+    model.routeChanges = 0;
+    model.etaSeconds = 0;
+    model.arrivalIso = null;
+    model.vehicleSpeed = 48;
+    elements.etaLabel.textContent = "--:--";
+    elements.arrivalTime.textContent = "--";
+    elements.navEta.textContent = "00:00";
+    elements.navRemaining.textContent = "0 m";
+    elements.navSpeed.textContent = "0 km/h";
+    elements.arrivalSummary.hidden = true;
+  }
+  elements.body.dataset.simulationState = model.phase;
   syncOperationsState();
+  renderResponderCard(nextUnit);
   updatePhaseUi();
 }
 
@@ -1705,7 +1959,7 @@ function bindControls() {
   elements.notes.addEventListener("input", () => { if (model.selectedIncidentId) incidentManager.update(model.selectedIncidentId, { notes: elements.notes.value }); });
   elements.pendingReviewBadge.addEventListener("click", () => { elements.reviewQueue.classList.add("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", "true"); });
   elements.toggleReviewQueue.addEventListener("click", () => { const open = elements.reviewQueue.classList.toggle("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", String(open)); });
-  const openIncidentFromEvent = (event) => { const target = event.target.closest("[data-open-incident],[data-incident-id]"); const id = target?.dataset.openIncident || target?.dataset.incidentId; if (id) openManagedIncident(id); };
+  const openIncidentFromEvent = (event) => { const arrivalTarget = event.target.closest("[data-view-arrival]"); if (arrivalTarget) return openArrivalForIncident(arrivalTarget.dataset.viewArrival); const target = event.target.closest("[data-open-incident],[data-incident-id]"); const id = target?.dataset.openIncident || target?.dataset.incidentId; if (id) openManagedIncident(id); };
   elements.reviewQueueList.addEventListener("click", openIncidentFromEvent);
   elements.incidentTaskbar.addEventListener("click", openIncidentFromEvent);
   elements.mapResultLayer.addEventListener("click", openIncidentFromEvent);
@@ -1713,8 +1967,9 @@ function bindControls() {
   elements.cctvMonitorGrid.addEventListener("click", handleCctvSelection);
   elements.cctvGridMode.addEventListener("click", () => { model.cctvGridMode = !model.cctvGridMode; elements.cctvGridMode.setAttribute("aria-pressed", String(model.cctvGridMode)); renderCctvWorkspace(); });
   elements.returnCity.addEventListener("click", () => { model.cctvWorkspaceOpen = false; renderCctvWorkspace(); });
-  elements.minimiseNavigation.addEventListener("click", () => { model.navigationMinimized = true; model.cctvWorkspaceOpen = true; model.cameraMode = "incident"; renderCctvWorkspace(); renderResponderCard(); updatePhaseUi(); });
-  elements.restoreNavigation.addEventListener("click", () => { model.navigationMinimized = false; model.cctvWorkspaceOpen = false; model.cameraMode = "responder"; renderCctvWorkspace(); renderResponderCard(); updatePhaseUi(); });
+  elements.minimiseNavigation.addEventListener("click", minimiseNavigationView);
+  elements.arrivalMinimise.addEventListener("click", minimiseNavigationView);
+  elements.restoreNavigation.addEventListener("click", restoreNavigationView);
   elements.openNewIncident.addEventListener("click", () => { elements.newIncidentAlert.hidden = true; openManagedIncident(model.pendingNewIncidentId); });
   elements.keepCurrentReview.addEventListener("click", () => { elements.newIncidentAlert.hidden = true; });
   elements.minimiseOpenNew.addEventListener("click", () => { const id = model.pendingNewIncidentId; elements.newIncidentAlert.hidden = true; if (model.modalMode === "pedestrian") minimiseCurrentReview(); openManagedIncident(id); });
@@ -1725,12 +1980,65 @@ function bindControls() {
     elements.cameraButtons.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
   }));
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.body.classList.contains("arrival-open")) return minimiseNavigationView();
     if (event.key !== "Escape" || !model.modalOpen) return;
     if (model.modalMode === "pedestrian") return requestReviewExit();
     if (model.modalMode === "review") return;
     if (model.modalMode === "critical") handleSecondaryModalAction();
     else finalizeFalseAlarm("Continue monitoring");
   });
+  elements.arrivalSummaryBody.addEventListener("keydown", handleArrivalScrollKey);
+  elements.arrivalMinimise.addEventListener("keydown", trapArrivalButtonFocus);
+  elements.handover.addEventListener("keydown", trapArrivalButtonFocus);
+  elements.handover.addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key) || elements.handover.disabled) return;
+    event.preventDefault();
+    handOverResponse();
+  });
+}
+
+function minimiseNavigationView() {
+  model.navigationMinimized = true;
+  model.cctvWorkspaceOpen = true;
+  model.cameraMode = "incident";
+  renderCctvWorkspace();
+  renderResponderCard();
+  updatePhaseUi();
+  elements.restoreNavigation.focus();
+}
+
+function restoreNavigationView() {
+  model.navigationMinimized = false;
+  model.cctvWorkspaceOpen = false;
+  model.cameraMode = "responder";
+  renderCctvWorkspace();
+  renderResponderCard();
+  updatePhaseUi();
+}
+
+function handleArrivalScrollKey(event) {
+  const body = elements.arrivalSummaryBody;
+  if (event.key === "Tab") {
+    event.preventDefault();
+    (event.shiftKey || elements.handover.disabled ? elements.arrivalMinimise : elements.handover).focus();
+    return;
+  }
+  const amount = Math.max(48, Math.round(body.clientHeight * 0.82));
+  if (event.key === "Home") body.scrollTop = 0;
+  else if (event.key === "End") body.scrollTop = body.scrollHeight;
+  else if (event.key === "PageDown") body.scrollTop += amount;
+  else if (event.key === "PageUp") body.scrollTop -= amount;
+  else if (event.key === "ArrowDown") body.scrollTop += 36;
+  else if (event.key === "ArrowUp") body.scrollTop -= 36;
+  else return;
+  event.preventDefault();
+}
+
+function trapArrivalButtonFocus(event) {
+  if (event.key !== "Tab" || !elements.body.classList.contains("arrival-open")) return;
+  event.preventDefault();
+  if (event.currentTarget === elements.arrivalMinimise) (event.shiftKey && !elements.handover.disabled ? elements.handover : elements.arrivalSummaryBody).focus();
+  else (event.shiftKey ? elements.arrivalSummaryBody : elements.arrivalMinimise).focus();
 }
 
 async function init() {
