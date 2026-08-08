@@ -19,7 +19,7 @@ Get-ChildItem package.json
 If `package.json` is not found, move to the folder where that file was downloaded. Replace the example path with the actual location on your computer:
 
 ```powershell
-cd "C:\path\to\Bloom Tech colllision"
+cd "C:\path\to\your-project-folder"
 ```
 
 The project does not need to be stored in the same user account, drive, or OneDrive location as the original development copy.
