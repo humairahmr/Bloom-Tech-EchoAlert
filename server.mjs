@@ -233,7 +233,7 @@ export async function createEchoAlertServer({ databasePath = path.join(root, "da
         return;
       }
 
-      const publicFile = pathname === "/" || pathname === "/index.html" || pathname === "/styles.css" || pathname === "/app.js" || pathname === "/scene3d.js" || pathname.startsWith("/assets/");
+      const publicFile = pathname === "/" || pathname === "/index.html" || pathname === "/styles.css" || pathname === "/app.js" || pathname === "/scene3d.js" || pathname === "/navigation.js" || pathname.startsWith("/assets/");
       if (!publicFile) {
         sendJson(response, 404, { error: "Not found" });
         return;
@@ -247,7 +247,7 @@ export async function createEchoAlertServer({ databasePath = path.join(root, "da
       const body = await readFile(filePath);
       response.writeHead(200, securityHeaders({
         "Content-Type": contentTypes.get(path.extname(filePath).toLowerCase()) || "application/octet-stream",
-        "Cache-Control": filePath.endsWith("index.html") ? "no-store" : "public, max-age=300"
+        "Cache-Control": "no-store"
       }));
       if (request.method === "HEAD") response.end();
       else response.end(body);

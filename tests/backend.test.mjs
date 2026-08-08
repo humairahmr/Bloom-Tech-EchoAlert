@@ -47,9 +47,11 @@ describe("EchoAlert API", () => {
     assert.equal(privateFileResponse.status, 404);
 
     const sceneModuleResponse = await fetch(`${baseUrl}/scene3d.js`);
+    const navigationModuleResponse = await fetch(`${baseUrl}/navigation.js`);
     const threeModuleResponse = await fetch(`${baseUrl}/vendor/three.module.js`);
     const threeCoreResponse = await fetch(`${baseUrl}/vendor/three.core.js`);
     assert.equal(sceneModuleResponse.status, 200);
+    assert.equal(navigationModuleResponse.status, 200);
     assert.equal(threeModuleResponse.status, 200);
     assert.equal(threeCoreResponse.status, 200);
   });

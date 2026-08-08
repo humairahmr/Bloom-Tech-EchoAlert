@@ -15,13 +15,23 @@ const COLORS = {
 
 const CRASHED_PHASES = new Set([
   "IMPACT",
+  "SUSPECTED_EVENT",
   "VISION_DETECTED",
   "AUDIO_DETECTED",
   "FUSION_VERIFYING",
+  "SENSOR_MISMATCH",
+  "FALSE_ALARM",
+  "AWAITING_HUMAN_REVIEW",
   "CRITICAL_CONFIRMED",
+  "ROUTE_CALCULATING",
   "DISPATCHED",
-  "RESPONDER_ARRIVED"
+  "NAVIGATING",
+  "REROUTING",
+  "RESPONDER_ARRIVED",
+  "CLEARED"
 ]);
+
+const NAVIGATION_PHASES = new Set(["ROUTE_CALCULATING", "DISPATCHED", "NAVIGATING", "REROUTING", "RESPONDER_ARRIVED"]);
 
 function material(color, options = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.12, ...options });
@@ -105,10 +115,17 @@ function createVehicle(color, { ambulance = false } = {}) {
     redBulb.position.set(-0.25, 3.05, -0.42);
     blueBulb.position.set(-0.25, 3.05, 0.42);
     group.add(redBulb, blueBulb);
+    const redReflection = new THREE.PointLight(COLORS.red, 0, 8, 2);
+    const blueReflection = new THREE.PointLight(COLORS.blue, 0, 8, 2);
+    redReflection.position.set(-0.25, 2.8, -0.7);
+    blueReflection.position.set(-0.25, 2.8, 0.7);
+    group.add(redReflection, blueReflection);
     emergencyLights.push(redBulb, blueBulb);
+    group.userData.emergencyReflections = [redReflection, blueReflection];
   }
 
   group.userData.emergencyLights = emergencyLights;
+  group.userData.emergencyReflections ||= [];
   return group;
 }
 
@@ -259,6 +276,14 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   verticalRoad.receiveShadow = true;
   scene.add(horizontalRoad, verticalRoad);
 
+  const emergencyAccessWest = box(5.2, 0.07, 12, roadMaterial);
+  emergencyAccessWest.position.set(-20, 0.36, 11);
+  const centralLink = box(21, 0.075, 5.2, roadMaterial);
+  centralLink.position.set(-12, 0.365, 16);
+  const medicalPriorityLane = box(5.2, 0.08, 10, roadMaterial);
+  medicalPriorityLane.position.set(-4.2, 0.37, 11.5);
+  [emergencyAccessWest, centralLink, medicalPriorityLane].forEach((road) => { road.receiveShadow = true; scene.add(road); });
+
   const sidewalkMaterial = material(COLORS.sidewalk, { roughness: 0.95 });
   [[-22, -22], [-22, 22], [22, -22], [22, 22]].forEach(([x, z]) => {
     const sidewalk = box(28, 0.3, 28, sidewalkMaterial);
@@ -358,6 +383,11 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   crashMarker.position.y = 0.24;
   crashMarker.visible = false;
   scene.add(crashMarker);
+  const investigationRadius = new THREE.Mesh(new THREE.RingGeometry(4.6, 4.72, 64), new THREE.MeshBasicMaterial({ color: COLORS.amber, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+  investigationRadius.rotation.x = -Math.PI / 2;
+  investigationRadius.position.y = 0.27;
+  investigationRadius.visible = false;
+  scene.add(investigationRadius);
   const impactPulse = new THREE.Mesh(new THREE.RingGeometry(1, 1.18, 48), new THREE.MeshBasicMaterial({ color: COLORS.red, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
   impactPulse.rotation.x = -Math.PI / 2;
   impactPulse.position.y = 0.28;
@@ -367,10 +397,19 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   impactLight.position.set(0, 3, 0);
   scene.add(impactLight);
 
-  const routePoints = [new THREE.Vector3(-27, 0.25, 4.2), new THREE.Vector3(-18, 0.25, 4.2), new THREE.Vector3(-10, 0.25, 4.2), new THREE.Vector3(-7, 0.25, 4.2)];
-  const routeLine = createLine(routePoints, COLORS.cyan, 0.92);
-  routeLine.visible = false;
-  scene.add(routeLine);
+  const routeGroup = new THREE.Group();
+  const blockedRouteGroup = new THREE.Group();
+  scene.add(routeGroup, blockedRouteGroup);
+  let renderedRouteVersion = -1;
+
+  const constructionSource = new THREE.Group();
+  const constructionBase = box(2.2, 0.45, 1.5, material(0x5c6465, { metalness: 0.72 }));
+  const constructionBeacon = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.35, 0.75, 12), material(COLORS.amber, { emissive: COLORS.amber, emissiveIntensity: 1.2 }));
+  constructionBeacon.position.set(0, 0.62, 0);
+  constructionSource.add(constructionBase, constructionBeacon);
+  constructionSource.position.set(9.5, 0.52, -14);
+  constructionSource.visible = false;
+  scene.add(constructionSource);
 
   const particleCount = 72;
   const particlePositions = new Float32Array(particleCount * 3);
@@ -419,12 +458,40 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     particleGeometry.attributes.position.needsUpdate = true;
   }
 
-  function ambulancePoint(progress) {
-    const clamped = clamp01(progress);
-    const totalSegments = routePoints.length - 1;
-    const scaled = clamped * totalSegments;
-    const index = Math.min(totalSegments - 1, Math.floor(scaled));
-    return routePoints[index].clone().lerp(routePoints[index + 1], scaled - index);
+  function clearGroup(group) {
+    [...group.children].forEach((child) => {
+      child.traverse((object) => {
+        object.geometry?.dispose();
+        if (Array.isArray(object.material)) object.material.forEach((item) => item.dispose());
+        else object.material?.dispose();
+      });
+      group.remove(child);
+    });
+  }
+
+  function rebuildRoute(state) {
+    renderedRouteVersion = state.routeVersion;
+    clearGroup(routeGroup);
+    clearGroup(blockedRouteGroup);
+    const points = state.routePoints || [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = new THREE.Vector3(points[index].x, 0.5, points[index].z);
+      const end = new THREE.Vector3(points[index + 1].x, 0.5, points[index + 1].z);
+      const curve = new THREE.LineCurve3(start, end);
+      const segment = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.17, 6, false), new THREE.MeshBasicMaterial({ color: state.routeTone === "alternative" ? COLORS.green : COLORS.cyan, transparent: true, opacity: 0.92 }));
+      segment.userData.segmentIndex = index;
+      routeGroup.add(segment);
+      const direction = end.clone().sub(start).normalize();
+      const arrow = new THREE.ArrowHelper(direction, start.clone().lerp(end, 0.55), 1.15, 0xe9fdff, 0.38, 0.23);
+      arrow.position.y = 0.57;
+      arrow.userData.segmentIndex = index;
+      routeGroup.add(arrow);
+    }
+    (state.blockedRoutePoints || []).forEach((pair) => {
+      const start = new THREE.Vector3(pair[0].x, 0.56, pair[0].z);
+      const end = new THREE.Vector3(pair[1].x, 0.56, pair[1].z);
+      blockedRouteGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(start, end), 12, 0.22, 6, false), new THREE.MeshBasicMaterial({ color: COLORS.red })));
+    });
   }
 
   function updateVehicles(state) {
@@ -435,37 +502,48 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     carALabel.position.set(state.carA.x, 3.45, state.carA.z);
     carBLabel.position.set(state.carB.x, 3.45, state.carB.z);
 
-    const ambulancePosition = ambulancePoint(state.ambulanceProgress);
+    const ambulancePosition = new THREE.Vector3(state.ambulance.x, 0, state.ambulance.z);
     ambulance.position.copy(ambulancePosition);
-    ambulance.position.y = 0;
+    ambulance.rotation.y = state.ambulance.rotation;
     ambulanceLabel.position.set(ambulancePosition.x, 4.25, ambulancePosition.z);
     ambulance.visible = true;
-    ambulanceLabel.visible = true;
+    ambulanceLabel.visible = !NAVIGATION_PHASES.has(state.phase) || state.cameraMode !== "responder";
 
-    const emergencyActive = state.phase === "DISPATCHED" || state.phase === "RESPONDER_ARRIVED";
+    const emergencyActive = NAVIGATION_PHASES.has(state.phase);
     ambulance.userData.emergencyLights.forEach((bulb, index) => {
       const active = emergencyActive && Math.floor(state.elapsed * 5) % 2 === index;
       bulb.material.emissiveIntensity = active ? 5 : 0.05;
+      ambulance.userData.emergencyReflections[index].intensity = active ? 4 : 0;
     });
   }
 
   function updateDetectionVisuals(state) {
-    const suspected = ["VISION_DETECTED", "AUDIO_DETECTED", "FUSION_VERIFYING"].includes(state.phase);
-    const confirmed = ["CRITICAL_CONFIRMED", "DISPATCHED", "RESPONDER_ARRIVED"].includes(state.phase);
-    crashMarker.visible = suspected || confirmed;
-    crashMarker.material.color.setHex(confirmed ? COLORS.red : COLORS.amber);
-    crashMarker.material.opacity = confirmed ? 0.9 : 0.48 + Math.sin(state.elapsed * 8) * 0.3;
-    crashMarker.scale.setScalar(1 + Math.sin(state.elapsed * 5) * 0.08);
+    const suspected = ["SUSPECTED_EVENT", "VISION_DETECTED", "AUDIO_DETECTED", "FUSION_VERIFYING", "SENSOR_MISMATCH", "FALSE_ALARM", "AWAITING_HUMAN_REVIEW"].includes(state.phase);
+    const confirmed = ["CRITICAL_CONFIRMED", "ROUTE_CALCULATING", "DISPATCHED", "NAVIGATING", "REROUTING", "RESPONDER_ARRIVED"].includes(state.phase);
+    const cleared = state.phase === "CLEARED";
+    crashMarker.visible = suspected || confirmed || cleared;
+    crashMarker.position.x = state.eventPosition?.x || 0;
+    crashMarker.position.z = state.eventPosition?.z || 0;
+    crashMarker.material.color.setHex(confirmed ? COLORS.red : cleared ? 0x6d898e : COLORS.amber);
+    crashMarker.material.opacity = confirmed || cleared ? 0.9 : 0.48 + Math.sin(state.elapsed * 8) * 0.3;
+    crashMarker.scale.setScalar(cleared ? 0.8 : 1 + Math.sin(state.elapsed * 5) * 0.08);
+    investigationRadius.visible = suspected;
+    investigationRadius.position.x = crashMarker.position.x;
+    investigationRadius.position.z = crashMarker.position.z;
+    investigationRadius.rotation.z = state.elapsed * 0.12;
 
-    cctvScan.visible = ["VISION_DETECTED", "AUDIO_DETECTED", "FUSION_VERIFYING", "CRITICAL_CONFIRMED"].includes(state.phase);
+    cctvScan.visible = ["VISION_DETECTED", "AUDIO_DETECTED", "FUSION_VERIFYING", "SENSOR_MISMATCH", "FALSE_ALARM", "CRITICAL_CONFIRMED"].includes(state.phase);
+    if (cctvScan.visible) cctvScan.geometry.setFromPoints([new THREE.Vector3(-10.1, 5.4, 9.8), new THREE.Vector3(crashMarker.position.x, 0.5, crashMarker.position.z)]);
     if (cctvScan.visible) cctvScan.material.opacity = 0.38 + Math.sin(state.elapsed * 10) * 0.25;
 
-    const audioActive = ["AUDIO_DETECTED", "FUSION_VERIFYING"].includes(state.phase);
+    const audioActive = ["AUDIO_DETECTED", "FUSION_VERIFYING"].includes(state.phase) && state.activeScenario !== "sudden_stop";
     audioPath.visible = audioActive;
     audioPulse.visible = audioActive;
     if (audioActive) {
       const progress = (state.phaseElapsed * 1.45) % 1;
-      audioPulse.position.lerpVectors(new THREE.Vector3(0, 0.55, 0), new THREE.Vector3(12, 4, -11), progress);
+      const source = new THREE.Vector3(state.eventPosition?.x || 0, 0.55, state.eventPosition?.z || 0);
+      audioPath.geometry.setFromPoints([source, new THREE.Vector3(12, 4, -11)]);
+      audioPulse.position.lerpVectors(source, new THREE.Vector3(12, 4, -11), progress);
       hardware.micRing.scale.setScalar(1 + Math.sin(state.elapsed * 13) * 0.28);
       hardware.micRing.material.emissiveIntensity = 1.2 + Math.sin(state.elapsed * 13) * 0.7;
     } else {
@@ -484,11 +562,24 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
       impactLight.intensity = 0;
     }
 
-    routeLine.visible = state.phase === "DISPATCHED" || state.phase === "RESPONDER_ARRIVED";
+    constructionSource.visible = state.activeScenario === "loud_noise" && suspected;
+    if (constructionSource.visible) constructionBeacon.material.emissiveIntensity = 0.8 + Math.sin(state.elapsed * 14) * 0.7;
+    if (renderedRouteVersion !== state.routeVersion) rebuildRoute(state);
+    routeGroup.visible = NAVIGATION_PHASES.has(state.phase);
+    blockedRouteGroup.visible = NAVIGATION_PHASES.has(state.phase);
+    routeGroup.children.forEach((child) => {
+      if (!child.isMesh || child.userData.segmentIndex == null) return;
+      const segment = state.routeSegments?.[child.userData.segmentIndex];
+      if (!segment) return;
+      const completed = state.routeDistance >= segment.endDistance;
+      const active = state.routeDistance >= segment.startDistance && state.routeDistance < segment.endDistance;
+      child.material.color.setHex(completed ? 0x657176 : active ? 0xe7fbff : state.routeTone === "alternative" ? COLORS.green : COLORS.cyan);
+      child.material.opacity = completed ? 0.5 : 0.94;
+    });
     trafficLights.forEach((light) => {
-      const emergency = CRASHED_PHASES.has(state.phase);
-      light.userData.bulbs.red.material.emissiveIntensity = emergency ? 2.4 : 0.05;
-      light.userData.bulbs.green.material.emissiveIntensity = emergency ? 0.05 : 1.8;
+      const priority = NAVIGATION_PHASES.has(state.phase);
+      light.userData.bulbs.red.material.emissiveIntensity = priority ? 0.05 : 1.2;
+      light.userData.bulbs.green.material.emissiveIntensity = priority ? 3.2 : 1.1;
     });
   }
 
@@ -496,10 +587,20 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     const incidentFocus = CRASHED_PHASES.has(state.phase);
     let desiredPosition = incidentFocus ? new THREE.Vector3(20, 17, 21) : new THREE.Vector3(27, 23, 28);
     let desiredTarget = new THREE.Vector3(0, 0.8, 0);
-    if ((state.phase === "DISPATCHED" || state.phase === "RESPONDER_ARRIVED") && state.followIncident) {
-      const ambulancePosition = ambulancePoint(state.ambulanceProgress);
-      desiredTarget = ambulancePosition.clone().setY(0.8);
-      desiredPosition = ambulancePosition.clone().add(new THREE.Vector3(16, 14, 17));
+    if (NAVIGATION_PHASES.has(state.phase)) {
+      const ambulancePosition = new THREE.Vector3(state.ambulance.x, 0, state.ambulance.z);
+      const forward = new THREE.Vector3(Math.cos(state.ambulance.rotation), 0, -Math.sin(state.ambulance.rotation));
+      if (state.cameraMode === "topdown") {
+        desiredTarget = ambulancePosition.clone();
+        desiredPosition = ambulancePosition.clone().add(new THREE.Vector3(0, 32, 0.01));
+      } else if (state.cameraMode === "incident" || state.phase === "RESPONDER_ARRIVED") {
+        desiredTarget = new THREE.Vector3(0, 0.8, 0);
+        desiredPosition = new THREE.Vector3(18, 19, 20);
+      } else {
+        const turnPullback = state.navigationInstruction?.manoeuvre?.startsWith("Turn") ? 3 : 0;
+        desiredTarget = ambulancePosition.clone().add(forward.clone().multiplyScalar(4)).setY(1.1);
+        desiredPosition = ambulancePosition.clone().add(forward.clone().multiplyScalar(-11 - turnPullback)).add(new THREE.Vector3(0, 8 + turnPullback, 0));
+      }
     }
     const smoothing = state.reducedMotion ? 1 : Math.min(1, delta * 2.8);
     camera.position.lerp(desiredPosition, smoothing);
@@ -524,10 +625,22 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     const replayElapsed = (now - state.modalOpenedAt) % 3600;
     const replayProgress = clamp01(replayElapsed / 2200);
     const eased = replayProgress * replayProgress * (3 - 2 * replayProgress);
-    carA.position.set(-11 + 10.7 * eased, 0, -1.15);
-    carA.rotation.y = eased > 0.88 ? 0.2 * ((eased - 0.88) / 0.12) : 0;
-    carB.position.set(1.15, 0, 11 - 10.7 * eased);
-    carB.rotation.y = -Math.PI / 2 - (eased > 0.88 ? 0.28 * ((eased - 0.88) / 0.12) : 0);
+    if (state.activeScenario === "sudden_stop") {
+      carA.position.set(-15 + 9 * eased, 0, -1.15);
+      carA.rotation.y = 0;
+      carB.position.set(1.15, 0, 11 - 6 * replayProgress);
+      carB.rotation.y = -Math.PI / 2;
+    } else if (state.activeScenario === "loud_noise") {
+      carA.position.set(-14 + 10 * replayProgress, 0, -1.15);
+      carA.rotation.y = 0;
+      carB.position.set(1.15, 0, 12 - 10 * replayProgress);
+      carB.rotation.y = -Math.PI / 2;
+    } else {
+      carA.position.set(-11 + 10.7 * eased, 0, -1.15);
+      carA.rotation.y = eased > 0.88 ? 0.2 * ((eased - 0.88) / 0.12) : 0;
+      carB.position.set(1.15, 0, 11 - 10.7 * eased);
+      carB.rotation.y = -Math.PI / 2 - (eased > 0.88 ? 0.28 * ((eased - 0.88) / 0.12) : 0);
+    }
     evidenceRenderer.render(scene, cctvCamera);
     carA.position.copy(savedA.position);
     carA.rotation.y = savedA.rotation;

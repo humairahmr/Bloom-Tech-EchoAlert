@@ -63,6 +63,15 @@
               <div><span class="sensor-icon fusion-icon" aria-hidden="true"></span><span>Sensor Fusion</span><strong id="fusion-state">Standby</strong></div>
             </div>
 
+            <label class="scenario-control" for="scenario-select">
+              <span>Demonstration scenario</span>
+              <select id="scenario-select" aria-label="Select simulation scenario">
+                <option value="confirmed">Confirmed Collision</option>
+                <option value="sudden_stop">False Alarm: Sudden Stop</option>
+                <option value="loud_noise">False Alarm: Loud Noise</option>
+              </select>
+            </label>
+
             <div class="compact-range">
               <label for="noise-level">Ambient noise <span id="noise-readout">35 dB</span></label>
               <input id="noise-level" type="range" min="20" max="85" value="35">
@@ -73,7 +82,7 @@
             </div>
 
             <div class="simulation-actions">
-              <button id="simulate-crash" class="primary-action" type="button"><span aria-hidden="true">▶</span> Simulate Crash</button>
+              <button id="simulate-crash" class="primary-action" type="button"><span aria-hidden="true">▶</span> <span id="simulate-label">Simulate Confirmed Crash</span></button>
               <button id="reset-simulation" class="reset-action" type="button"><span aria-hidden="true">↺</span> Reset</button>
             </div>
 
@@ -118,6 +127,38 @@
             <div><span>ETA</span><strong id="eta-label">--:--</strong></div>
             <div><span>Arrival</span><strong id="arrival-time">--</strong></div>
           </div>
+
+          <section id="navigation-hud" class="navigation-hud" aria-label="MED-01 responder navigation" aria-hidden="true">
+            <div class="next-turn-card">
+              <span id="nav-arrow" class="nav-arrow" aria-hidden="true">↑</span>
+              <div><strong id="nav-manoeuvre">Continue straight</strong><span id="nav-distance">200 m</span><small id="nav-road">Jalan Tun Abang Haji Openg</small></div>
+            </div>
+            <div class="camera-modes" role="group" aria-label="Navigation camera mode">
+              <button type="button" data-camera-mode="responder" aria-pressed="true">Responder View</button>
+              <button type="button" data-camera-mode="topdown" aria-pressed="false">Top-Down Route</button>
+              <button type="button" data-camera-mode="incident" aria-pressed="false">Incident Overview</button>
+            </div>
+            <aside class="navigation-map" aria-label="Responder route mini-map">
+              <canvas id="navigation-map" width="300" height="220" aria-label="Top-down route showing MED-01 and the incident"></canvas>
+              <button id="collapse-nav-map" type="button" aria-label="Collapse or expand mini-map">−</button>
+            </aside>
+            <div id="guidance-message" class="guidance-message" role="status">Emergency corridor activated</div>
+            <button id="simulate-road-block" class="road-block-button" type="button">Simulate Road Block</button>
+            <div class="trip-panel">
+              <strong>MED-01</strong>
+              <div><span>ETA</span><b id="nav-eta">00:18</b></div>
+              <div><span>Remaining</span><b id="nav-remaining">420 m</b></div>
+              <div><span>Destination</span><b>Intersection 4</b></div>
+              <div><span>Priority</span><b>Medical Tier 1</b></div>
+              <div><span>Route</span><b id="route-status">Fastest emergency route</b></div>
+            </div>
+            <div id="arrival-summary" class="arrival-summary" hidden>
+              <div><span>Response time</span><strong id="response-time">--</strong></div>
+              <div><span>Distance travelled</span><strong id="distance-travelled">--</strong></div>
+              <div><span>Route changes</span><strong id="route-changes">0</strong></div>
+              <button id="handover-response" type="button">Hand Over to On-Scene Response</button>
+            </div>
+          </section>
         </section>
 
         <section class="network-strip" aria-labelledby="network-title">
@@ -132,6 +173,17 @@
             </table>
           </div>
         </section>
+
+        <details class="incident-history">
+          <summary><span>Incident history</span><span><b id="review-count">0</b> awaiting review</span></summary>
+          <div class="history-toolbar"><span>Dispatcher decisions and response outcomes</span><button id="clear-history" type="button">Clear History</button></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Incident</th><th>Time</th><th>Trigger</th><th>Vision</th><th>Audio</th><th>Fusion</th><th>Decision</th><th>Dispatch</th><th>Response</th></tr></thead>
+              <tbody id="history-body"><tr class="empty-history"><td colspan="9">No completed demonstrations yet</td></tr></tbody>
+            </table>
+          </div>
+        </details>
       </main>
     </div>
 
@@ -147,32 +199,32 @@
           <section class="receipts-column" aria-labelledby="receipts-title">
             <div class="modal-section-heading">
               <div><span class="section-kicker">The receipts</span><h2 id="receipts-title">Visual and acoustic evidence</h2></div>
-              <span class="correlation-badge">Matched incident window</span>
+              <span id="correlation-badge" class="correlation-badge">Matched incident window</span>
             </div>
 
             <div class="modal-evidence-grid">
               <article class="modal-evidence-card">
-                <header><div><span>Visual</span><strong>CCTV #04</strong></div><span class="confirmed-badge">Vision confirmed</span></header>
+                <header><div><span>Visual</span><strong>CCTV #04</strong></div><span id="vision-badge" class="confirmed-badge">Vision confirmed</span></header>
                 <div class="cctv-replay">
                   <canvas id="cctv-canvas" width="640" height="360" aria-label="Three-dimensional CCTV replay of the vehicle collision"></canvas>
                   <div class="scan-lines" aria-hidden="true"></div>
                   <div class="cctv-meta"><span>CAM 04 · LIVE REPLAY</span><span id="cctv-time">--:--:--</span></div>
-                  <div class="cctv-detection-box"><span>VEH-214 + VEH-927</span></div>
-                  <div class="rapid-deceleration">Rapid Deceleration: <strong>80 km/h → 0 km/h</strong></div>
+                  <div id="cctv-detection-box" class="cctv-detection-box"><span id="cctv-object-label">VEH-214 + VEH-927</span></div>
+                  <div id="vision-overlay" class="rapid-deceleration">Rapid Deceleration: <strong>80 km/h → 0 km/h</strong></div>
                 </div>
                 <dl class="evidence-meta">
-                  <div><dt>Object IDs</dt><dd>VEH-214 / VEH-927</dd></div>
+                  <div><dt>Object IDs</dt><dd id="vision-object-ids">VEH-214 / VEH-927</dd></div>
                   <div><dt>Confidence</dt><dd id="vision-confidence">99.6%</dd></div>
                   <div><dt>Impact</dt><dd id="vision-impact-time">--:--:--</dd></div>
                 </dl>
               </article>
 
               <article class="modal-evidence-card">
-                <header><div><span>Audio</span><strong>Spectrogram analysis</strong></div><span class="confirmed-badge">Audio confirmed</span></header>
+                <header><div><span>Audio</span><strong>Spectrogram analysis</strong></div><span id="audio-badge" class="confirmed-badge">Audio confirmed</span></header>
                 <div class="modal-spectrogram">
                   <canvas id="evidence-spectrogram" width="640" height="360" aria-label="Animated spectrogram with a collision spike at the impact timestamp"></canvas>
                   <div class="frequency-scale"><span>8 kHz</span><span>4 kHz</span><span>0 Hz</span></div>
-                  <div class="audio-callout"><span>Collision signature</span><strong>99.8% Match</strong></div>
+                  <div id="audio-callout" class="audio-callout"><span>Collision signature</span><strong id="audio-match-label">99.8% Match</strong></div>
                 </div>
                 <dl class="evidence-meta">
                   <div><dt>Peak amplitude</dt><dd id="peak-amplitude">128 dB</dd></div>
@@ -192,15 +244,18 @@
               <div><dt>Camera ID</dt><dd>CCTV #04</dd></div>
               <div><dt>Location</dt><dd id="modal-location">Jalan Awang Ramli Amit — Intersection 4</dd></div>
               <div><dt>Detection time</dt><dd id="detection-time">--:--:--</dd></div>
-              <div><dt>Vision confidence</dt><dd>99.6%</dd></div>
-              <div><dt>Audio confidence</dt><dd>99.8%</dd></div>
+              <div><dt>Vision confidence</dt><dd id="modal-vision-confidence">99.6%</dd></div>
+              <div><dt>Audio confidence</dt><dd id="modal-audio-confidence">99.8%</dd></div>
               <div><dt>Sensor-fusion confidence</dt><dd id="fusion-confidence">99.5%</dd></div>
-              <div><dt>Recommended response</dt><dd>Medical Tier 1</dd></div>
+              <div><dt>Final classification</dt><dd id="modal-classification">Confirmed vehicle collision</dd></div>
+              <div><dt>Recommended response</dt><dd id="modal-recommendation">Medical Tier 1</dd></div>
+              <div><dt>Dispatch status</dt><dd id="modal-dispatch-status">Awaiting dispatcher</dd></div>
             </dl>
             <p id="emergency-note" class="match-note">Visual and acoustic events matched within the same incident window, reducing false-positive risk through independent confirmation.</p>
             <div class="modal-actions">
               <button id="dispatch-btn" class="dispatch-button" type="button"><span aria-hidden="true">➤</span> Dispatch Medical Tier 1</button>
               <button id="false-alarm-btn" class="false-alarm-button" type="button">Dismiss / False Alarm</button>
+              <button id="human-review-btn" class="human-review-button" type="button" hidden>Escalate for Human Review</button>
             </div>
           </aside>
         </div>
