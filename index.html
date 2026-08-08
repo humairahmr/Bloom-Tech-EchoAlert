@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <header class="topbar">
       <div class="brand-lockup">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
@@ -26,15 +27,15 @@
 
     <div class="app-frame">
       <nav class="side-rail" aria-label="Command center sections">
-        <button class="rail-button" type="button" aria-label="Overview" data-tooltip="Overview"><span aria-hidden="true">H</span></button>
-        <button class="rail-button active" type="button" aria-label="Live incidents" data-tooltip="Live incidents"><span aria-hidden="true">A</span></button>
-        <button class="rail-button" type="button" aria-label="Sensor network" data-tooltip="Sensor network"><span aria-hidden="true">N</span></button>
-        <button class="rail-button" type="button" aria-label="Responders" data-tooltip="Responders"><span aria-hidden="true">R</span></button>
-        <button class="rail-button rail-bottom" type="button" aria-label="Settings" data-tooltip="Settings"><span aria-hidden="true">S</span></button>
+        <button class="rail-button" type="button" data-scroll-target="main-content" aria-label="Overview" data-tooltip="Overview"><span class="rail-icon" aria-hidden="true">⌂</span><span class="rail-label">Overview</span></button>
+        <button class="rail-button active" type="button" data-scroll-target="simulation-stage" aria-label="Live incidents" aria-current="page" data-tooltip="Live incidents"><span class="rail-icon" aria-hidden="true">◉</span><span class="rail-label">Live</span></button>
+        <button class="rail-button" type="button" data-scroll-target="network-strip" aria-label="Sensor network" data-tooltip="Sensor network"><span class="rail-icon" aria-hidden="true">▤</span><span class="rail-label">Sensors</span></button>
+        <button class="rail-button" type="button" data-scroll-target="incident-history-section" aria-label="Responders and incident history" data-tooltip="Responders"><span class="rail-icon" aria-hidden="true">▲</span><span class="rail-label">Response</span></button>
+        <button class="rail-button rail-bottom" type="button" disabled aria-disabled="true" aria-label="Settings (not available in this demo)" data-tooltip="Not available in this demo"><span class="rail-icon" aria-hidden="true">⚙</span><span class="rail-label">Settings</span></button>
       </nav>
 
-      <main class="operations" aria-label="Urban crash detection and emergency response simulator">
-        <section class="simulation-stage" aria-labelledby="simulation-title">
+      <main id="main-content" class="operations" aria-label="Urban crash detection and emergency response simulator" tabindex="-1">
+        <section id="simulation-stage" class="simulation-stage" aria-labelledby="simulation-title">
           <h1 id="simulation-title" class="sr-only">Interactive 3D smart-city crash simulation</h1>
           <div id="three-scene" class="three-scene">
             <div id="scene-loading" class="scene-loading" role="status">
@@ -196,7 +197,7 @@
           </section>
         </section>
 
-        <section class="network-strip" aria-labelledby="network-title">
+        <section id="network-strip" class="network-strip" aria-labelledby="network-title">
           <div class="network-heading">
             <div><span class="section-kicker">Time difference of arrival</span><h2 id="network-title">Sensor network telemetry</h2></div>
             <div class="network-summary"><span id="record-state">Monitoring</span> · <span id="locked-count">0</span> nodes locked · <span id="estimate-label">Awaiting incident</span></div>
@@ -209,7 +210,7 @@
           </div>
         </section>
 
-        <details class="incident-history">
+        <details id="incident-history-section" class="incident-history">
           <summary><span>Incident history</span><span><b id="review-count">0</b> awaiting review</span></summary>
           <div class="history-toolbar"><span>Dispatcher decisions and response outcomes</span><button id="clear-history" type="button">Clear History</button></div>
           <div class="table-wrap">
@@ -277,7 +278,7 @@
               </article>
             </div>
             <section id="event-timeline-panel" class="event-timeline-panel" hidden><div><span class="section-kicker">Timeline reconstruction</span><strong>Correlated event sequence</strong></div><ol id="event-timeline"></ol></section>
-            <label id="incident-notes-field" class="incident-notes-field" hidden for="incident-notes"><span>Dispatcher notes</span><textarea id="incident-notes" maxlength="280" rows="3" placeholder="Add operational notes"></textarea></label>
+            <label id="incident-notes-field" class="incident-notes-field" hidden for="incident-notes"><span>Dispatcher notes</span><textarea id="incident-notes" maxlength="280" rows="3" placeholder="Add operational notes" aria-describedby="notes-counter"></textarea><span id="notes-counter" class="notes-counter" aria-live="polite">0 / 280</span></label>
           </section>
 
           <aside class="action-column" aria-labelledby="action-title">
@@ -326,5 +327,42 @@
       });
     </script>
     <script type="module" src="app.js" onerror="document.documentElement.dataset.moduleError='Failed to load application module'"></script>
+    <script>
+      // Interface-only enhancements: in-page section navigation for the side rail and a
+      // live character counter for dispatcher notes. Deliberately kept separate from
+      // app.js so none of the existing simulation/dispatch logic is touched.
+      (function () {
+        var railButtons = Array.prototype.slice.call(document.querySelectorAll(".rail-button[data-scroll-target]"));
+        function setActive(button) {
+          railButtons.forEach(function (btn) {
+            var isActive = btn === button;
+            btn.classList.toggle("active", isActive);
+            if (isActive) { btn.setAttribute("aria-current", "page"); }
+            else { btn.removeAttribute("aria-current"); }
+          });
+        }
+        railButtons.forEach(function (button) {
+          button.addEventListener("click", function () {
+            var targetId = button.getAttribute("data-scroll-target");
+            var target = document.getElementById(targetId);
+            if (!target) return;
+            if (target.tagName === "DETAILS") { target.open = true; }
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+            setActive(button);
+          });
+        });
+
+        var notesField = document.getElementById("incident-notes");
+        var notesCounter = document.getElementById("notes-counter");
+        if (notesField && notesCounter) {
+          var updateCounter = function () {
+            var max = Number(notesField.getAttribute("maxlength")) || 280;
+            notesCounter.textContent = notesField.value.length + " / " + max;
+          };
+          notesField.addEventListener("input", updateCounter);
+          updateCounter();
+        }
+      })();
+    </script>
   </body>
 </html>
