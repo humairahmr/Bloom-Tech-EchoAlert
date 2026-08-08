@@ -218,7 +218,22 @@ export async function createEchoAlertServer({ databasePath = path.join(root, "da
         return;
       }
 
-      const publicFile = pathname === "/" || pathname === "/index.html" || pathname === "/styles.css" || pathname === "/app.js" || pathname.startsWith("/assets/");
+      const threeBuildFiles = new Map([
+        ["/vendor/three.module.js", "three.module.js"],
+        ["/vendor/three.core.js", "three.core.js"]
+      ]);
+      if (threeBuildFiles.has(pathname)) {
+        const threeModule = await readFile(path.join(root, "node_modules", "three", "build", threeBuildFiles.get(pathname)));
+        response.writeHead(200, securityHeaders({
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=86400"
+        }));
+        if (request.method === "HEAD") response.end();
+        else response.end(threeModule);
+        return;
+      }
+
+      const publicFile = pathname === "/" || pathname === "/index.html" || pathname === "/styles.css" || pathname === "/app.js" || pathname === "/scene3d.js" || pathname.startsWith("/assets/");
       if (!publicFile) {
         sendJson(response, 404, { error: "Not found" });
         return;

@@ -32,152 +32,98 @@
         <button class="rail-button rail-bottom" type="button" aria-label="Settings" data-tooltip="Settings"><span aria-hidden="true">S</span></button>
       </nav>
 
-      <main class="operations" aria-label="Urban acoustic incident simulator">
-        <section class="map-stage" aria-label="Live acoustic sensor map">
-          <svg id="city-map" viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid slice" role="img" aria-labelledby="map-title map-desc">
-            <title id="map-title">Sibu acoustic sensor network simulation</title>
-            <desc id="map-desc">A dark city map with six microphone array nodes, an acoustic source, sound wave fronts, bearings, and a triangulated incident estimate.</desc>
-            <defs>
-              <pattern id="minor-grid" width="34" height="34" patternUnits="userSpaceOnUse">
-                <path d="M 34 0 L 0 0 0 34" class="minor-grid-line"></path>
-              </pattern>
-              <filter id="incident-glow" x="-100%" y="-100%" width="300%" height="300%">
-                <feGaussianBlur stdDeviation="10" result="blur"></feGaussianBlur>
-                <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
-              </filter>
-              <filter id="sensor-glow" x="-100%" y="-100%" width="300%" height="300%">
-                <feGaussianBlur stdDeviation="4" result="blur"></feGaussianBlur>
-                <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
-              </filter>
-            </defs>
-            <rect width="1200" height="720" class="map-base"></rect>
-            <rect width="1200" height="720" fill="url(#minor-grid)" opacity="0.34"></rect>
-            <g id="district-layer"></g>
-            <g id="road-layer"></g>
-            <g id="map-label-layer"></g>
-            <g id="wave-layer"></g>
-            <g id="bearing-layer"></g>
-            <g id="sensor-layer"></g>
-            <g id="result-layer"></g>
-          </svg>
+      <main class="operations" aria-label="Urban crash detection and emergency response simulator">
+        <section class="simulation-stage" aria-labelledby="simulation-title">
+          <h1 id="simulation-title" class="sr-only">Interactive 3D smart-city crash simulation</h1>
+          <div id="three-scene" class="three-scene">
+            <div id="scene-loading" class="scene-loading" role="status">
+              <span></span>
+              Initialising smart-city digital twin
+            </div>
+          </div>
 
-          <div class="map-shade" aria-hidden="true"></div>
-
-          <section class="simulation-console" aria-label="Simulation controls">
-            <div class="console-heading">
+          <section class="monitor-panel" aria-label="Simulation status and controls">
+            <div class="monitor-heading">
               <div>
-                <span class="section-kicker">Scenario injector</span>
-                <strong>Acoustic event</strong>
+                <span class="section-kicker">Live intersection twin</span>
+                <strong>Jalan Awang Ramli Amit</strong>
               </div>
               <span class="live-tag"><i></i> Live</span>
             </div>
-            <label for="event-type">Signature</label>
-            <select id="event-type">
-              <option value="collision">Vehicle collision</option>
-              <option value="glass">Shattering glass</option>
-              <option value="metal">Metal impact</option>
-              <option value="structure">Structural failure</option>
-              <option value="industrial">Illegal industrial activity</option>
-            </select>
-            <div class="range-control">
+
+            <div class="system-state-block">
+              <span>System state</span>
+              <strong id="system-state">SYSTEM NORMAL</strong>
+              <small id="phase-description">Traffic and roadside sensors operating normally</small>
+            </div>
+
+            <div class="sensor-status-list" aria-label="Sensor fusion status">
+              <div><span class="sensor-icon vision-icon" aria-hidden="true"></span><span>Vision AI</span><strong id="vision-state">Monitoring</strong></div>
+              <div><span class="sensor-icon audio-icon" aria-hidden="true"></span><span>Acoustic AI</span><strong id="audio-state">Listening</strong></div>
+              <div><span class="sensor-icon fusion-icon" aria-hidden="true"></span><span>Sensor Fusion</span><strong id="fusion-state">Standby</strong></div>
+            </div>
+
+            <div class="compact-range">
               <label for="noise-level">Ambient noise <span id="noise-readout">35 dB</span></label>
               <input id="noise-level" type="range" min="20" max="85" value="35">
             </div>
-            <div class="range-control">
-              <label for="event-energy">Event intensity <span id="energy-readout">118 dB</span></label>
-              <input id="event-energy" type="range" min="85" max="145" value="118">
+            <div class="compact-range">
+              <label for="event-energy">Impact intensity <span id="energy-readout">128 dB</span></label>
+              <input id="event-energy" type="range" min="100" max="145" value="128">
             </div>
-            <div class="console-actions">
-              <button id="simulate-btn" class="primary-action" type="button"><span aria-hidden="true">▶</span> Trigger event</button>
-              <button id="randomize-btn" class="icon-action" type="button" aria-label="Move event" data-tooltip="Move event"><span aria-hidden="true">↗</span></button>
+
+            <div class="simulation-actions">
+              <button id="simulate-crash" class="primary-action" type="button"><span aria-hidden="true">▶</span> Simulate Crash</button>
+              <button id="reset-simulation" class="reset-action" type="button"><span aria-hidden="true">↺</span> Reset</button>
             </div>
+
+            <label class="follow-control" for="follow-incident">
+              <input id="follow-incident" type="checkbox" checked>
+              <span>Follow incident camera</span>
+            </label>
           </section>
 
-          <div class="map-legend" aria-label="Map legend">
-            <span><i class="legend-sensor"></i> Sensor node</span>
-            <span><i class="legend-event"></i> Incident</span>
-            <span><i class="legend-estimate"></i> Estimate</span>
-          </div>
-
-          <div class="zoom-controls" aria-label="Map controls">
-            <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
-            <button id="zoom-out" type="button" aria-label="Zoom out">-</button>
-            <button id="recenter" type="button" aria-label="Center on incident">◎</button>
-          </div>
-
-          <article id="incident-panel" class="incident-panel" aria-labelledby="incident-status">
-            <header class="incident-header">
-              <div><span class="warning-icon" aria-hidden="true">!</span><strong id="incident-status">Status: critical - multi-sensor confirmation</strong></div>
-              <button id="close-panel" type="button" aria-label="Close incident panel">×</button>
-            </header>
-
-            <div class="incident-content">
-              <section class="evidence-section" aria-labelledby="evidence-title">
-                <div class="section-title-row">
-                  <div>
-                    <span class="section-kicker">Sensor fusion</span>
-                    <h2 id="evidence-title">Audio and visual verification</h2>
-                  </div>
-                  <span id="fusion-state" class="fusion-state"><i></i> Correlated</span>
-                </div>
-
-                <div class="evidence-grid">
-                  <figure class="evidence-card">
-                    <figcaption>Visual AI: CCTV C-04 <span>Jalan Awang Ramli Amit</span></figcaption>
-                    <div class="cctv-frame">
-                      <img src="assets/cctv-collision.png" alt="Traffic camera view of two cars after a collision at an urban intersection">
-                      <div class="camera-meta"><span>CAM 04</span><span id="camera-time">08:14:02</span></div>
-                      <div class="detection-box"><span>Impact zone</span></div>
-                      <button id="play-evidence" class="play-button" type="button" aria-label="Play visual evidence"><span aria-hidden="true">▶</span></button>
-                    </div>
-                    <div class="evidence-footer"><span class="analysis-dot"></span><strong id="vision-label">Rapid deceleration detected</strong><span id="vision-score">96.4%</span></div>
-                  </figure>
-
-                  <figure class="evidence-card">
-                    <figcaption>Audio AI: Spectrogram analysis <span id="signature-band">0-8 kHz</span></figcaption>
-                    <div class="spectrogram-wrap">
-                      <canvas id="spectrogram" width="460" height="260" aria-label="Generated acoustic event spectrogram"></canvas>
-                      <div class="frequency-axis"><span>8 kHz</span><span>4 kHz</span><span>0 Hz</span></div>
-                      <div class="signature-callout"><span id="classification-label">Collision signature</span><strong id="confidence-label">--</strong></div>
-                    </div>
-                    <div class="evidence-footer"><span class="analysis-dot"></span><strong id="signature-text">Broadband impulse detected</strong><span id="snr-summary">-- dB SNR</span></div>
-                  </figure>
-                </div>
-
-                <div class="triangulation-strip">
-                  <div><span>First arrival</span><strong id="first-node">N1</strong></div>
-                  <div><span>Clock drift</span><strong><span id="clock-skew">2.4</span> ms</strong></div>
-                  <div><span>Localization error</span><strong id="error-label">--</strong></div>
-                  <div><span>Packet loss</span><strong><span id="packet-loss">0</span>%</strong></div>
-                </div>
-              </section>
-
-              <aside class="incident-details" aria-labelledby="details-title">
-                <div class="section-title-row">
-                  <div>
-                    <span class="section-kicker">Response workflow</span>
-                    <h2 id="details-title">Incident details and dispatch</h2>
-                  </div>
-                </div>
-                <dl class="detail-list">
-                  <div><dt>Incident ID</dt><dd id="incident-id">EA-20260808-01</dd></div>
-                  <div><dt>Location</dt><dd id="location-label">Intersection 4, Jalan Awang Ramli Amit, Sibu</dd><small id="coordinate-label">2.2913, 111.8291</small></div>
-                  <div><dt>Detected</dt><dd id="timestamp-label">08:14:02 AM</dd></div>
-                  <div><dt>Confirmed event</dt><dd id="confirmed-event">High-impact vehicle collision</dd></div>
-                  <div><dt>Recommended response</dt><dd id="response-label">Medical Tier 1 + traffic unit</dd></div>
-                </dl>
-                <button id="dispatch-btn" class="dispatch-button" type="button"><span aria-hidden="true">➤</span><span id="dispatch-label">Dispatch medical tier 1</span></button>
-                <button id="review-btn" class="review-button" type="button">Flag for operator review</button>
-                <p id="dispatch-note" class="dispatch-note" role="status">Awaiting operator confirmation</p>
-              </aside>
+          <aside class="map-inset" aria-label="Sibu incident map">
+            <div class="map-inset-header">
+              <div><span class="section-kicker">Acoustic grid</span><strong>Sibu Incident Map</strong></div>
+              <span id="map-status" class="map-state">Standby</span>
             </div>
-          </article>
+            <svg id="city-map" viewBox="0 0 1200 720" role="img" aria-labelledby="map-title map-desc">
+              <title id="map-title">Sibu acoustic sensor network</title>
+              <desc id="map-desc">A compact dark map showing six acoustic sensor nodes and the triangulated crash location.</desc>
+              <defs>
+                <pattern id="minor-grid" width="34" height="34" patternUnits="userSpaceOnUse">
+                  <path d="M 34 0 L 0 0 0 34" class="minor-grid-line"></path>
+                </pattern>
+                <filter id="sensor-glow" x="-100%" y="-100%" width="300%" height="300%">
+                  <feGaussianBlur stdDeviation="4" result="blur"></feGaussianBlur>
+                  <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+                </filter>
+              </defs>
+              <rect width="1200" height="720" class="map-base"></rect>
+              <rect width="1200" height="720" fill="url(#minor-grid)" opacity="0.34"></rect>
+              <g id="district-layer"></g>
+              <g id="road-layer"></g>
+              <g id="map-label-layer"></g>
+              <g id="sensor-layer"></g>
+              <g id="map-result-layer"></g>
+            </svg>
+            <div class="map-coordinate"><span id="map-coordinate">2.2913, 111.8291</span><strong>Intersection 4</strong></div>
+          </aside>
+
+          <div class="scene-metrics" aria-label="Live simulation metrics">
+            <div><span>Phase</span><strong id="phase-label">Normal</strong></div>
+            <div><span>Vehicle A</span><strong id="vehicle-speed">48 km/h</strong></div>
+            <div><span>Response unit</span><strong id="unit-state">MED-01 standby</strong></div>
+            <div><span>ETA</span><strong id="eta-label">--:--</strong></div>
+            <div><span>Arrival</span><strong id="arrival-time">--</strong></div>
+          </div>
         </section>
 
         <section class="network-strip" aria-labelledby="network-title">
           <div class="network-heading">
             <div><span class="section-kicker">Time difference of arrival</span><h2 id="network-title">Sensor network telemetry</h2></div>
-            <div class="network-summary"><span id="record-state">Persisted</span> · <span id="locked-count">6</span> nodes locked · <span id="estimate-label">--</span></div>
+            <div class="network-summary"><span id="record-state">Monitoring</span> · <span id="locked-count">0</span> nodes locked · <span id="estimate-label">Awaiting incident</span></div>
           </div>
           <div class="table-wrap">
             <table>
@@ -189,6 +135,90 @@
       </main>
     </div>
 
-    <script src="app.js"></script>
+    <div id="emergency-modal" class="emergency-overlay" aria-hidden="true">
+      <div class="emergency-backdrop"></div>
+      <section class="emergency-dialog" role="dialog" aria-modal="true" aria-labelledby="emergency-title" aria-describedby="emergency-note">
+        <header class="emergency-banner">
+          <div><span class="warning-icon" aria-hidden="true">!</span><strong id="emergency-title">Status: critical — multi-sensor confirmation</strong></div>
+          <span id="modal-incident-id">EA-PENDING</span>
+        </header>
+
+        <div class="emergency-body">
+          <section class="receipts-column" aria-labelledby="receipts-title">
+            <div class="modal-section-heading">
+              <div><span class="section-kicker">The receipts</span><h2 id="receipts-title">Visual and acoustic evidence</h2></div>
+              <span class="correlation-badge">Matched incident window</span>
+            </div>
+
+            <div class="modal-evidence-grid">
+              <article class="modal-evidence-card">
+                <header><div><span>Visual</span><strong>CCTV #04</strong></div><span class="confirmed-badge">Vision confirmed</span></header>
+                <div class="cctv-replay">
+                  <canvas id="cctv-canvas" width="640" height="360" aria-label="Three-dimensional CCTV replay of the vehicle collision"></canvas>
+                  <div class="scan-lines" aria-hidden="true"></div>
+                  <div class="cctv-meta"><span>CAM 04 · LIVE REPLAY</span><span id="cctv-time">--:--:--</span></div>
+                  <div class="cctv-detection-box"><span>VEH-214 + VEH-927</span></div>
+                  <div class="rapid-deceleration">Rapid Deceleration: <strong>80 km/h → 0 km/h</strong></div>
+                </div>
+                <dl class="evidence-meta">
+                  <div><dt>Object IDs</dt><dd>VEH-214 / VEH-927</dd></div>
+                  <div><dt>Confidence</dt><dd id="vision-confidence">99.6%</dd></div>
+                  <div><dt>Impact</dt><dd id="vision-impact-time">--:--:--</dd></div>
+                </dl>
+              </article>
+
+              <article class="modal-evidence-card">
+                <header><div><span>Audio</span><strong>Spectrogram analysis</strong></div><span class="confirmed-badge">Audio confirmed</span></header>
+                <div class="modal-spectrogram">
+                  <canvas id="evidence-spectrogram" width="640" height="360" aria-label="Animated spectrogram with a collision spike at the impact timestamp"></canvas>
+                  <div class="frequency-scale"><span>8 kHz</span><span>4 kHz</span><span>0 Hz</span></div>
+                  <div class="audio-callout"><span>Collision signature</span><strong>99.8% Match</strong></div>
+                </div>
+                <dl class="evidence-meta">
+                  <div><dt>Peak amplitude</dt><dd id="peak-amplitude">128 dB</dd></div>
+                  <div><dt>Confidence</dt><dd id="audio-confidence">99.8%</dd></div>
+                  <div><dt>Matched</dt><dd id="audio-impact-time">--:--:--</dd></div>
+                </dl>
+              </article>
+            </div>
+          </section>
+
+          <aside class="action-column" aria-labelledby="action-title">
+            <div class="modal-section-heading">
+              <div><span class="section-kicker">The action</span><h2 id="action-title">Incident and response</h2></div>
+            </div>
+            <dl class="incident-facts">
+              <div><dt>Coordinates</dt><dd id="modal-coordinates">2.291, 111.829</dd></div>
+              <div><dt>Camera ID</dt><dd>CCTV #04</dd></div>
+              <div><dt>Location</dt><dd id="modal-location">Jalan Awang Ramli Amit — Intersection 4</dd></div>
+              <div><dt>Detection time</dt><dd id="detection-time">--:--:--</dd></div>
+              <div><dt>Vision confidence</dt><dd>99.6%</dd></div>
+              <div><dt>Audio confidence</dt><dd>99.8%</dd></div>
+              <div><dt>Sensor-fusion confidence</dt><dd id="fusion-confidence">99.5%</dd></div>
+              <div><dt>Recommended response</dt><dd>Medical Tier 1</dd></div>
+            </dl>
+            <p id="emergency-note" class="match-note">Visual and acoustic events matched within the same incident window, reducing false-positive risk through independent confirmation.</p>
+            <div class="modal-actions">
+              <button id="dispatch-btn" class="dispatch-button" type="button"><span aria-hidden="true">➤</span> Dispatch Medical Tier 1</button>
+              <button id="false-alarm-btn" class="false-alarm-button" type="button">Dismiss / False Alarm</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__echoAlertErrors = [];
+      document.documentElement.dataset.bootstrap = "ready";
+      window.addEventListener("error", function (event) {
+        window.__echoAlertErrors.push(event.message || "Unknown application error");
+        document.documentElement.dataset.appError = event.message || "Unknown application error";
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        window.__echoAlertErrors.push(String(event.reason && event.reason.message || event.reason || "Unhandled application error"));
+        document.documentElement.dataset.appError = String(event.reason && event.reason.message || event.reason || "Unhandled application error");
+      });
+    </script>
+    <script type="module" src="app.js" onerror="document.documentElement.dataset.moduleError='Failed to load application module'"></script>
   </body>
 </html>

@@ -1,13 +1,14 @@
 # EchoAlert Urban Acoustic Incident Network
 
-EchoAlert is a complete local prototype for receiving acoustic sensor readings, classifying incident signatures, triangulating their location, persisting incident records, and coordinating dispatch from a live command-center dashboard.
+EchoAlert is a complete local prototype for receiving acoustic sensor readings, classifying incident signatures, triangulating their location, persisting incident records, and coordinating dispatch from a live command-center dashboard. Its guided 3D intersection demo connects CCTV evidence, acoustic analysis, sensor fusion, and an animated medical response in one repeatable flow.
 
 ## Run
 
-Requires Node.js 22.5 or newer. No package installation is needed.
+Requires Node.js 22.5 or newer.
 
 ```bash
-node server.mjs
+npm.cmd install
+npm.cmd start
 ```
 
 Open `http://127.0.0.1:4173`.
@@ -22,13 +23,13 @@ Supported scenarios are `collision`, `glass`, `metal`, `structure`, and `industr
 
 ## System flow
 
-1. Directional microphone nodes extract arrival time, bearing, SNR, spectral centroid, envelope duration, and attack features.
-2. Each node uploads its reading to `POST /api/sensor-readings` under a shared event key.
-3. The backend fuses an event after four unique nodes report it.
-4. Acoustic features are compared with known signatures and assigned a confidence score.
-5. TDOA localization estimates the event coordinates using a coarse search and local refinement.
-6. The incident, sensor evidence, status, and dispatch actions are stored in SQLite.
-7. Server-Sent Events push new and updated incidents to every connected dashboard.
+1. Two low-poly vehicles move through a monitored Three.js intersection.
+2. A guided impact triggers separate CCTV motion and roadside acoustic detections.
+3. The UI confirms an emergency only when both signals match the same incident window.
+4. The backend generates and persists six-node acoustic evidence through `POST /api/simulations`.
+5. TDOA localization estimates event coordinates and the full-screen modal presents synchronized visual and audio evidence.
+6. Dispatch is persisted through the incident API while MED-01 follows an animated route and ETA to the scene.
+7. Server-Sent Events keep connected dashboards synchronized with new and updated incidents.
 
 The dashboard scenario injector uses `POST /api/simulations`. This generates realistic readings and passes them through the same persistence and fusion services used by sensor uploads.
 
@@ -83,5 +84,18 @@ Tests cover all five signature classes, localization accuracy, API health, simul
 - `src/engine.mjs`: acoustic simulation, classification, and TDOA localization
 - `src/store.mjs`: SQLite schema and persistence operations
 - `scripts/simulate-network.mjs`: distributed sensor-node simulator
-- `app.js`: API-connected dashboard behavior and visualization
+- `scene3d.js`: Three.js city scene, vehicle motion, sensor effects, CCTV replay, and ambulance animation
+- `app.js`: central incident state machine, API integration, modal, spectrogram, dispatch, and reset behavior
+- `index.html`: dashboard, simulation controls, evidence modal, map, and telemetry markup
+- `styles.css`: command-center, 3D overlay, modal, and responsive mobile styling
 - `tests/backend.test.mjs`: engine and API integration tests
+
+## Demo sequence
+
+1. Show the moving traffic and the three standby AI indicators.
+2. Click **Simulate Crash** and narrate the approach, impact, CCTV detection, acoustic detection, and signal correlation.
+3. In the evidence modal, point out the shared impact timestamp and independent confidence scores.
+4. Click **Dispatch Medical Tier 1** and follow MED-01, its route, and the live ETA.
+5. After arrival, click **Reset** to demonstrate that the full sequence is repeatable.
+
+The crash, CCTV inference, audio spectrogram, and ambulance are deterministic demonstration models. They do not replace physical sensor hardware, a trained production ML model, or emergency-service dispatch integration.
