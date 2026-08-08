@@ -116,8 +116,14 @@ const model = {
   cctvWorkspaceOpen: false,
   lastOperationsRender: 0,
   pendingNewIncidentId: null,
-  confirmationAction: "minimise"
-  ,concurrentMode: false
+  confirmationAction: "minimise",
+  concurrentMode: false,
+  activeView: "incidents",
+  incidentTab: "active",
+  selectedSensorId: "CCTV #04",
+  selectedUnitId: "MED-01",
+  detectionFilter: "all",
+  lastWorkspaceRender: 0
 };
 
 let sensors = [];
@@ -127,9 +133,44 @@ let eventStream = null;
 const elements = {
   body: document.body,
   operations: $(".operations"),
+  navButtons: [...document.querySelectorAll("[data-view]")],
+  workspaceViews: [...document.querySelectorAll("[data-workspace]")],
+  mobileNavToggle: $("#mobile-nav-toggle"),
+  primaryNavItems: $("#primary-nav-items"),
+  globalSystemStatus: $("#global-system-status"),
+  globalCriticalCount: $("#global-critical-count"),
+  globalPendingCount: $("#global-pending-count"),
+  globalResponseCount: $("#global-response-count"),
+  globalSensorHealth: $("#global-sensor-health"),
+  globalClock: $("#global-clock"),
+  navIncidentCount: $("#nav-incident-count"),
+  navResponseCount: $("#nav-response-count"),
+  overviewSummary: $("#overview-summary"),
+  overviewStageSlot: $("#overview-stage-slot"),
+  incidentStageSlot: $("#incident-stage-slot"),
+  responderStageSlot: $("#responder-stage-slot"),
+  sensorMapSlot: $("#sensor-map-slot"),
+  incidentTabs: [...document.querySelectorAll(".workspace-tabs [data-incident-tab]")],
+  incidentTabPanels: [...document.querySelectorAll(".incident-tab-panel")],
+  activeIncidentList: $("#active-incident-list"),
+  activeTabCount: $("#active-tab-count"),
+  pendingTabCount: $("#pending-tab-count"),
+  detectionTabCount: $("#detection-tab-count"),
+  resolvedTabCount: $("#resolved-tab-count"),
+  recentActivityList: $("#recent-activity-list"),
+  sensorSummary: $("#sensor-summary"),
+  sensorList: $("#sensor-list"),
+  sensorDetail: $("#sensor-detail"),
+  responderSummary: $("#responder-summary"),
+  unitList: $("#unit-list"),
+  detectionSearch: $("#detection-search"),
+  detectionLogList: $("#detection-log-list"),
+  logFilters: [...document.querySelectorAll("[data-log-filter]")],
   backendState: $("#backend-state"),
   backendHealth: $(".api-health"),
   nodeCount: $("#node-count"),
+  simulationStage: $(".simulation-stage"),
+  mapInset: $(".map-inset"),
   sceneContainer: $("#three-scene"),
   sceneLoading: $("#scene-loading"),
   cctvCanvas: $("#cctv-canvas"),
@@ -385,7 +426,7 @@ function updatePhaseUi() {
   elements.operations.dataset.navigationActive = String(navigating);
   elements.unitState.textContent = activeUnit ? `${activeUnit.id} ${activeUnit.status.replaceAll("_", " ").toLowerCase()}` : model.phase === PHASES.RESPONDER_ARRIVED ? "MED-01 on scene" : navigating ? "MED-01 dispatched" : "MED-01 / MED-02 available";
   const responseIncident = activeUnit ? incidentManager.get(activeUnit.assignedIncident) : null;
-  const showArrival = Boolean(activeUnit && ["ON_SCENE", "HANDOVER_COMPLETE"].includes(activeUnit.status) && responseIncident?.response?.arrivalProcessed && !model.navigationMinimized && !model.modalOpen);
+  const showArrival = Boolean(activeUnit && ["ON_SCENE", "HANDOVER_COMPLETE"].includes(activeUnit.status) && responseIncident?.response?.arrivalProcessed && !model.navigationMinimized && !model.modalOpen && model.activeView === "responders");
   const arrivalWasOpen = elements.body.classList.contains("arrival-open");
   elements.arrivalSummary.hidden = !showArrival;
   elements.body.classList.toggle("arrival-open", showArrival);
@@ -443,6 +484,7 @@ function tick(delta, now) {
     renderReviewQueue();
     renderIncidentTaskbar();
     renderCctvWorkspace();
+    renderWorkspaceData();
     model.lastOperationsRender = now;
   }
   elements.vehicleSpeed.textContent = `${Math.max(0, Math.round(model.vehicleSpeed))} km/h`;
@@ -1391,6 +1433,164 @@ const CCTV_FEEDS = [
   ["CCTV #04", "Incident Crossing"], ["CCTV #05", "Northbound Junction"], ["CCTV #06", "Hospital Route"]
 ];
 
+const WORKSPACE_IDS = new Set(["overview", "incidents", "sensors", "responders"]);
+const RESOLVED_INCIDENT_STATES = new Set(["FALSE_ALARM", "CLEARED", "CLOSED", "ON_SCENE_RESPONSE"]);
+
+function setActiveView(view, { updateHistory = true, focus = true } = {}) {
+  const nextView = WORKSPACE_IDS.has(view) ? view : "incidents";
+  model.activeView = nextView;
+  elements.body.dataset.activeView = nextView;
+  elements.workspaceViews.forEach((workspace) => {
+    const active = workspace.dataset.workspace === nextView;
+    workspace.hidden = !active;
+    workspace.classList.toggle("is-active", active);
+  });
+  elements.navButtons.forEach((button) => {
+    const active = button.dataset.view === nextView;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  elements.primaryNavItems.classList.remove("is-open");
+  elements.mobileNavToggle.setAttribute("aria-expanded", "false");
+
+  if (nextView === "sensors") {
+    if (elements.mapInset.parentElement !== elements.sensorMapSlot) elements.sensorMapSlot.appendChild(elements.mapInset);
+  } else {
+    if (elements.mapInset.parentElement !== elements.simulationStage) elements.simulationStage.insertBefore(elements.mapInset, elements.cctvWorkspace);
+    const target = nextView === "overview" ? elements.overviewStageSlot : nextView === "responders" ? elements.responderStageSlot : model.incidentTab === "active" ? elements.incidentStageSlot : null;
+    if (target && elements.simulationStage.parentElement !== target) target.appendChild(elements.simulationStage);
+  }
+
+  if (updateHistory && location.hash !== `#${nextView}`) history.pushState({ view: nextView }, "", `${location.pathname}${location.search}#${nextView}`);
+  renderWorkspaceData();
+  requestAnimationFrame(() => {
+    window.dispatchEvent(new Event("resize"));
+    if (focus) document.querySelector(`#view-${nextView} > .workspace-heading h1`)?.focus({ preventScroll: true });
+  });
+}
+
+function setIncidentTab(tab, { focus = true } = {}) {
+  const nextTab = ["active", "pending", "detection", "resolved"].includes(tab) ? tab : "active";
+  model.incidentTab = nextTab;
+  elements.incidentTabs.forEach((button) => {
+    const active = button.dataset.incidentTab === nextTab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  elements.incidentTabPanels.forEach((panel) => {
+    const active = panel.id === `incident-tab-${nextTab}`;
+    panel.hidden = !active;
+    panel.classList.toggle("is-active", active);
+  });
+  if (nextTab === "active" && model.activeView === "incidents" && elements.simulationStage.parentElement !== elements.incidentStageSlot) elements.incidentStageSlot.appendChild(elements.simulationStage);
+  if (focus) document.querySelector(`[data-incident-tab="${nextTab}"]`)?.focus({ preventScroll: true });
+  renderWorkspaceData();
+}
+
+function renderWorkspaceData() {
+  renderGlobalStatus();
+  renderOverview();
+  renderActiveIncidents();
+  renderDetectionLog();
+  renderSensorNetwork();
+  renderRespondersWorkspace();
+}
+
+function renderGlobalStatus() {
+  const incidents = incidentManager.list();
+  const active = incidents.filter((incident) => !RESOLVED_INCIDENT_STATES.has(incident.state) && !incident.response?.handoverCompleted);
+  const critical = active.filter((incident) => ["critical", "high"].includes(incident.severity)).length;
+  const pending = incidentManager.pendingReviews().length;
+  const activeUnits = unitManager.list().filter((unit) => ["RESERVED", "EN_ROUTE", "ARRIVING", "ON_SCENE"].includes(unit.status)).length;
+  elements.globalSystemStatus.textContent = phaseCopy()[0].replaceAll("_", " ");
+  elements.globalCriticalCount.textContent = String(critical);
+  elements.globalPendingCount.textContent = String(pending);
+  elements.globalResponseCount.textContent = String(activeUnits);
+  elements.globalSensorHealth.textContent = `${sensors.length || 6}/6 online`;
+  elements.globalClock.textContent = new Date().toLocaleTimeString("en-MY", { hour12: false });
+  elements.navIncidentCount.textContent = String(critical);
+  elements.navResponseCount.textContent = String(activeUnits);
+  elements.navIncidentCount.hidden = critical === 0;
+  elements.navResponseCount.hidden = activeUnits === 0;
+  elements.activeTabCount.textContent = String(active.length);
+  elements.pendingTabCount.textContent = String(pending);
+  elements.detectionTabCount.textContent = String(detectionRecords().length);
+  elements.resolvedTabCount.textContent = String(incidents.length - active.length);
+}
+
+function renderOverview() {
+  const incidents = incidentManager.list();
+  const units = unitManager.list();
+  const active = incidents.filter((incident) => !RESOLVED_INCIDENT_STATES.has(incident.state) && !incident.response?.handoverCompleted);
+  const cards = [
+    ["Critical incidents", active.filter((item) => item.severity === "critical").length, "Immediate attention", "critical", "incidents", "active"],
+    ["High priority", active.filter((item) => item.severity === "high").length, "Active operations", "warning", "incidents", "active"],
+    ["Pending review", incidentManager.pendingReviews().length, "Human decision", "warning", "incidents", "pending"],
+    ["Responders available", units.filter((unit) => unit.status === "AVAILABLE").length, "Medical and police", "healthy", "responders", ""],
+    ["Responders en route", units.filter((unit) => ["EN_ROUTE", "ARRIVING"].includes(unit.status)).length, "Emergency corridor", "response", "responders", ""],
+    ["On scene", units.filter((unit) => unit.status === "ON_SCENE").length, "Response active", "response", "responders", ""],
+    ["Sensors online", sensors.length || 6, "No outages", "healthy", "sensors", ""],
+    ["Low confidence", detectionRecords().filter((record) => record.confidence < .5).length, "Quietly logged", "", "incidents", "detection"]
+  ];
+  elements.overviewSummary.innerHTML = cards.map(([label, value, detail, tone, view, tab]) => `<button class="summary-card" type="button" data-tone="${tone}" data-view-target="${view}" ${tab ? `data-incident-tab="${tab}"` : ""}><span>${label}</span><strong>${value}</strong><small>${detail}</small></button>`).join("");
+
+  const activity = incidents.flatMap((incident) => incident.timeline.map((entry) => ({ ...entry, id: incident.id }))).sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 7);
+  elements.recentActivityList.innerHTML = activity.length ? activity.map((entry) => `<li><time>${formatTime(entry.at)}</time><strong>${escapeHtml(entry.label)}</strong><span>${escapeHtml(entry.id)}</span></li>`).join("") : "<li><time>Now</time><strong>City monitoring active</strong><span>No recent incidents</span></li>";
+}
+
+function renderActiveIncidents() {
+  const active = incidentManager.list().filter((incident) => !RESOLVED_INCIDENT_STATES.has(incident.state) && !incident.response?.handoverCompleted);
+  elements.activeIncidentList.innerHTML = active.map((incident) => `<article class="entity-card"><header><strong>${escapeHtml(incident.id)}</strong><span>${escapeHtml(incident.severity)} priority</span></header><p>${escapeHtml(incident.title)}<br>${escapeHtml(incident.location)}</p><dl><div><dt>Fusion</dt><dd>${percent(incident.confidence?.fusion)}</dd></div><div><dt>Status</dt><dd>${escapeHtml(incident.state.replaceAll("_", " "))}</dd></div><div><dt>Unit</dt><dd>${escapeHtml(incident.assignedUnit || "Unassigned")}</dd></div></dl><div class="entity-actions"><button type="button" data-incident-action="open" data-incident-id="${escapeHtml(incident.id)}">View Evidence</button>${incident.assignedUnit ? `<button type="button" data-unit-action="focus" data-unit-id="${escapeHtml(incident.assignedUnit)}">View Responder</button>` : ""}<button type="button" data-sensor-action="focus" data-sensor-id="${escapeHtml(incident.cameraIds?.[0] || "CCTV #04")}">Detecting Sensor</button><button type="button" data-view-target="overview" data-incident-id="${escapeHtml(incident.id)}">City Map</button></div></article>`).join("");
+}
+
+function detectionRecords() {
+  const incidentRecords = incidentManager.list().filter((incident) => incident.state === "FALSE_ALARM" || (incident.confidence?.fusion || 0) < .5).map((incident) => ({ id: incident.id, location: incident.location, type: incident.title, confidence: incident.confidence?.fusion || 0, state: incident.state, camera: incident.cameraIds?.[0] || "CCTV #04", incident }));
+  const known = new Set(incidentRecords.map((record) => record.id));
+  model.history.forEach((entry) => {
+    if (!known.has(entry.id) && /false|monitor|low|cleared/i.test(`${entry.decision} ${entry.fusion}`)) incidentRecords.push({ id: entry.id, location: entry.location, type: entry.trigger, confidence: parseFloat(entry.fusion) / 100 || 0, state: entry.decision, camera: "CCTV #04", incident: null });
+  });
+  return incidentRecords;
+}
+
+function renderDetectionLog() {
+  const query = elements.detectionSearch.value.trim().toLowerCase();
+  const records = detectionRecords().filter((record) => {
+    const matchesFilter = model.detectionFilter === "all" || model.detectionFilter === "low" && record.confidence < .5 || model.detectionFilter === "false" && /false|cleared/i.test(record.state);
+    return matchesFilter && (!query || `${record.id} ${record.location} ${record.camera} ${record.type}`.toLowerCase().includes(query));
+  });
+  elements.detectionLogList.innerHTML = records.length ? records.map((record) => `<article class="detection-row"><div><strong>${escapeHtml(record.id)}</strong><p>${escapeHtml(record.camera)}</p></div><div><strong>${escapeHtml(record.type)}</strong><p>${escapeHtml(record.location)}</p></div><div><span>Fusion</span><strong>${percent(record.confidence)}</strong></div><div><span>Status</span><strong>${escapeHtml(String(record.state).replaceAll("_", " "))}</strong></div><div><span>Interrupt policy</span><strong>Quiet log</strong></div><div class="entity-actions">${record.incident ? `<button type="button" data-detection-action="promote" data-incident-id="${escapeHtml(record.id)}">Promote to Review</button><button type="button" data-incident-action="select" data-incident-id="${escapeHtml(record.id)}">Link Incident</button>` : ""}<button type="button" data-detection-action="monitor" data-incident-id="${escapeHtml(record.id)}">Continue Monitoring</button></div></article>`).join("") : '<div class="empty-workspace"><strong>No matching detections</strong><span>Low-confidence events remain quiet until evidence warrants review.</span></div>';
+}
+
+function renderSensorNetwork() {
+  const acousticSensors = sensors.length ? sensors : Array.from({ length: 6 }, (_, index) => ({ id: `N${index + 1}` }));
+  const allSensors = [...CCTV_FEEDS.map(([id, location]) => ({ id, type: "CCTV", location })), ...acousticSensors.map((sensor) => ({ ...sensor, type: "Acoustic", location: "Sibu acoustic grid" }))];
+  const linkedCount = incidentManager.list().filter((incident) => incident.cameraIds?.length).length;
+  elements.sensorSummary.innerHTML = [["Online", allSensors.length, "healthy"], ["Degraded", 0, "warning"], ["Offline", 0, "critical"], ["CCTV", CCTV_FEEDS.length, "response"], ["Acoustic", acousticSensors.length, "response"], ["Linked incidents", linkedCount, "warning"]].map(([label, value, tone]) => `<button class="summary-card" type="button" data-tone="${tone}"><span>${label}</span><strong>${value}</strong><small>Infrastructure state</small></button>`).join("");
+  elements.sensorList.innerHTML = allSensors.map((sensor) => {
+    const linked = incidentManager.list().filter((incident) => sensor.type === "CCTV" ? incident.cameraIds?.includes(sensor.id) : incident.confidence?.audio > 0).length;
+    return `<button type="button" data-sensor-action="select" data-sensor-id="${escapeHtml(sensor.id)}" aria-pressed="${sensor.id === model.selectedSensorId}"><strong>${escapeHtml(sensor.id)} · ${sensor.type}</strong><span>ONLINE</span><small>${escapeHtml(sensor.location)} · ${linked} linked event${linked === 1 ? "" : "s"}</small></button>`;
+  }).join("");
+  const selected = allSensors.find((sensor) => sensor.id === model.selectedSensorId) || allSensors[0];
+  if (!selected) return;
+  model.selectedSensorId = selected.id;
+  const reading = model.currentIncident?.telemetry?.find((item) => item.sensorId === selected.id);
+  const linked = incidentManager.list().filter((incident) => selected.type === "CCTV" ? incident.cameraIds?.includes(selected.id) : incident.confidence?.audio > 0);
+  const signal = selected.type === "CCTV" ? "Live simulated video" : reading ? `${reading.snrDb.toFixed(1)} dB SNR` : "Ambient listening";
+  const confidence = selected.type === "CCTV" ? model.currentIncident?.confidence?.vision ?? .99 : model.currentIncident?.confidence?.audio ?? .98;
+  elements.sensorDetail.innerHTML = `<span class="section-kicker">Selected ${selected.type} sensor</span><h2>${escapeHtml(selected.id)}</h2><p>${selected.type === "CCTV" ? "Live object tracking, coverage direction and incident correlation." : "Directional audio capture, spectrum analysis and time-of-arrival localisation."}</p><dl><div><dt>Status</dt><dd>ONLINE</dd></div><div><dt>Location</dt><dd>${escapeHtml(selected.location)}</dd></div><div><dt>Signal quality</dt><dd>${escapeHtml(signal)}</dd></div><div><dt>Confidence</dt><dd>${percent(confidence)}</dd></div><div><dt>Last update</dt><dd>${formatTime(new Date())}</dd></div><div><dt>Recent events</dt><dd>${linked.length}</dd></div></dl><div class="entity-actions">${selected.type === "CCTV" ? `<button type="button" data-sensor-action="live" data-sensor-id="${escapeHtml(selected.id)}">Open Live CCTV</button>` : ""}${linked[0] ? `<button type="button" data-incident-action="select" data-incident-id="${escapeHtml(linked[0].id)}">View Linked Incident</button>` : ""}<button type="button" data-incident-tab="detection" data-view-target="incidents">Detection History</button></div>`;
+}
+
+function renderRespondersWorkspace() {
+  const units = unitManager.list();
+  const statuses = ["AVAILABLE", "RESERVED", "EN_ROUTE", "ARRIVING", "ON_SCENE", "HANDOVER_COMPLETE", "UNAVAILABLE"];
+  elements.responderSummary.innerHTML = statuses.map((status) => `<button class="summary-card" type="button" data-tone="${status === "AVAILABLE" ? "healthy" : ["EN_ROUTE", "ARRIVING", "ON_SCENE"].includes(status) ? "response" : status === "UNAVAILABLE" ? "critical" : ""}"><span>${status.replaceAll("_", " ")}</span><strong>${units.filter((unit) => unit.status === status).length}</strong><small>Response units</small></button>`).join("");
+  elements.unitList.innerHTML = units.map((unit) => {
+    const remaining = Math.max(0, (unit.route?.totalDistance || 0) - unit.routeDistance);
+    return `<article class="entity-card" data-status="${unit.status}"><header><strong>${escapeHtml(unit.id)}</strong><span>${unit.type}</span></header><p>${escapeHtml(unit.status.replaceAll("_", " "))} · ${escapeHtml(unit.instruction?.roadName || "Standby station")}</p><dl><div><dt>Incident</dt><dd>${escapeHtml(unit.assignedIncident || "Unassigned")}</dd></div><div><dt>Speed</dt><dd>${Math.round(unit.speedMps * 3.6)} km/h</dd></div><div><dt>ETA</dt><dd>${formatDuration(unit.etaSeconds)}</dd></div><div><dt>Remaining</dt><dd>${Math.round(remaining)} m</dd></div><div><dt>Route</dt><dd>${unit.route ? "Calculated" : "Standby"}</dd></div><div><dt>Availability</dt><dd>${unit.status === "AVAILABLE" ? "Available" : "Committed"}</dd></div></dl><div class="entity-actions">${unit.assignedIncident ? `<button type="button" data-unit-action="focus" data-unit-id="${escapeHtml(unit.id)}">${unit.arrivalProcessed ? "View Arrival" : "Return to Navigation"}</button><button type="button" data-incident-action="select" data-incident-id="${escapeHtml(unit.assignedIncident)}">Assigned Incident</button>` : ""}<button type="button" data-view-target="overview" data-unit-id="${escapeHtml(unit.id)}">Locate on Map</button></div></article>`;
+  }).join("");
+}
+
 function syncOperationsState() {
   model.incidents = incidentManager.list();
   model.units = unitManager.list();
@@ -1399,6 +1599,7 @@ function syncOperationsState() {
   renderIncidentTaskbar();
   renderCctvWorkspace();
   updateMapIncident();
+  renderWorkspaceData();
 }
 
 function syncActiveUnit(forceRoute = false) {
@@ -1469,7 +1670,7 @@ function completeUnitArrival(unitId, incidentId) {
   if (unit.id === model.activeNavigationUnit) syncActiveUnit(true);
   syncOperationsState();
   updatePhaseUi();
-  if (model.navigationMinimized || model.selectedIncidentId !== incident.id) showToast(`${unit.id} has arrived at ${incident.id}`);
+  if (model.activeView !== "responders" || model.navigationMinimized || model.selectedIncidentId !== incident.id) showToast(`${unit.id} has arrived at ${incident.id} - open Responders to review arrival`);
   return true;
 }
 
@@ -1642,6 +1843,8 @@ function simulateConcurrentFalseAlarm() {
 function openManagedIncident(id) {
   const incident = incidentManager.get(id);
   if (!incident) return;
+  setActiveView("incidents", { focus: false });
+  setIncidentTab("active", { focus: false });
   if (incident.type === "suspected-pedestrian-hit-and-run") return openPedestrianReview(id);
   incidentManager.select(id);
   model.selectedIncidentId = id;
@@ -1665,7 +1868,7 @@ function openArrivalForIncident(id) {
   model.phase = incident.response.handoverCompleted ? PHASES.ON_SCENE_RESPONSE : PHASES.RESPONDER_ARRIVED;
   elements.body.dataset.simulationState = model.phase;
   closeEvidenceModal();
-  elements.reviewQueue.classList.remove("is-open");
+  setActiveView("responders", { focus: false });
   syncActiveUnit(true);
   renderCctvWorkspace();
   updatePhaseUi();
@@ -1927,6 +2130,28 @@ function adoptExternalIncident(incident) {
 }
 
 function bindControls() {
+  elements.navButtons.forEach((button) => button.addEventListener("click", () => setActiveView(button.dataset.view)));
+  elements.mobileNavToggle.addEventListener("click", () => {
+    const open = elements.primaryNavItems.classList.toggle("is-open");
+    elements.mobileNavToggle.setAttribute("aria-expanded", String(open));
+  });
+  elements.incidentTabs.forEach((button, index) => {
+    button.addEventListener("click", () => setIncidentTab(button.dataset.incidentTab));
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? elements.incidentTabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + elements.incidentTabs.length) % elements.incidentTabs.length;
+      setIncidentTab(elements.incidentTabs[nextIndex].dataset.incidentTab);
+    });
+  });
+  elements.operations.addEventListener("click", handleWorkspaceAction);
+  elements.detectionSearch.addEventListener("input", renderDetectionLog);
+  elements.logFilters.forEach((button) => button.addEventListener("click", () => {
+    model.detectionFilter = button.dataset.logFilter;
+    elements.logFilters.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+    renderDetectionLog();
+  }));
+  window.addEventListener("hashchange", () => setActiveView(location.hash.slice(1), { updateHistory: false }));
   elements.simulate.addEventListener("click", startSelectedScenario);
   elements.reset.addEventListener("click", resetSimulation);
   elements.resetSelected.addEventListener("click", resetSelectedIncident);
@@ -1953,11 +2178,15 @@ function bindControls() {
   elements.minimiseReview.addEventListener("click", minimiseCurrentReview);
   elements.minimiseReviewIcon.addEventListener("click", minimiseCurrentReview);
   elements.closeReviewIcon.addEventListener("click", requestReviewExit);
-  elements.reviewQueueShortcut.addEventListener("click", () => { elements.reviewQueue.classList.add("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", "true"); });
+  elements.reviewQueueShortcut.addEventListener("click", () => {
+    if (model.modalMode === "pedestrian") minimiseCurrentReview();
+    setActiveView("incidents");
+    setIncidentTab("pending");
+  });
   elements.confirmMinimise.addEventListener("click", () => model.confirmationAction === "false-alarm" ? completePedestrianFalseAlarm() : minimiseCurrentReview());
   elements.returnReview.addEventListener("click", () => { elements.unresolvedConfirm.hidden = true; elements.minimiseReview.focus(); });
   elements.notes.addEventListener("input", () => { if (model.selectedIncidentId) incidentManager.update(model.selectedIncidentId, { notes: elements.notes.value }); });
-  elements.pendingReviewBadge.addEventListener("click", () => { elements.reviewQueue.classList.add("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", "true"); });
+  elements.pendingReviewBadge.addEventListener("click", () => { setActiveView("incidents"); setIncidentTab("pending"); });
   elements.toggleReviewQueue.addEventListener("click", () => { const open = elements.reviewQueue.classList.toggle("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", String(open)); });
   const openIncidentFromEvent = (event) => { const arrivalTarget = event.target.closest("[data-view-arrival]"); if (arrivalTarget) return openArrivalForIncident(arrivalTarget.dataset.viewArrival); const target = event.target.closest("[data-open-incident],[data-incident-id]"); const id = target?.dataset.openIncident || target?.dataset.incidentId; if (id) openManagedIncident(id); };
   elements.reviewQueueList.addEventListener("click", openIncidentFromEvent);
@@ -1981,6 +2210,15 @@ function bindControls() {
   }));
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && elements.body.classList.contains("arrival-open")) return minimiseNavigationView();
+    const editable = event.target.closest?.("input, textarea, select, [contenteditable='true']");
+    if (!model.modalOpen && !editable && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+      const shortcutView = { o: "overview", i: "incidents", s: "sensors", r: "responders" }[event.key.toLowerCase()];
+      if (shortcutView) {
+        event.preventDefault();
+        setActiveView(shortcutView);
+        return;
+      }
+    }
     if (event.key !== "Escape" || !model.modalOpen) return;
     if (model.modalMode === "pedestrian") return requestReviewExit();
     if (model.modalMode === "review") return;
@@ -1997,6 +2235,63 @@ function bindControls() {
   });
 }
 
+function handleWorkspaceAction(event) {
+  const viewTarget = event.target.closest("[data-view-target]");
+  if (viewTarget) {
+    const incidentId = viewTarget.dataset.incidentId;
+    if (incidentId) { incidentManager.select(incidentId); model.selectedIncidentId = incidentId; }
+    setActiveView(viewTarget.dataset.viewTarget);
+    if (viewTarget.dataset.incidentTab) setIncidentTab(viewTarget.dataset.incidentTab);
+    return;
+  }
+  const incidentTarget = event.target.closest("[data-incident-action]");
+  if (incidentTarget) {
+    openManagedIncident(incidentTarget.dataset.incidentId);
+    return;
+  }
+  const unitTarget = event.target.closest("[data-unit-action]");
+  if (unitTarget) {
+    const unit = unitManager.get(unitTarget.dataset.unitId);
+    if (!unit) return;
+    model.selectedUnitId = unit.id;
+    if (unit.assignedIncident) incidentManager.select(unit.assignedIncident);
+    if (unit.route) {
+      model.activeNavigationUnit = unit.id;
+      model.navigationMinimized = false;
+      model.cameraMode = "responder";
+      syncActiveUnit(true);
+    }
+    setActiveView("responders");
+    updatePhaseUi();
+    return;
+  }
+  const sensorTarget = event.target.closest("[data-sensor-action]");
+  if (sensorTarget) {
+    model.selectedSensorId = sensorTarget.dataset.sensorId;
+    if (sensorTarget.dataset.sensorAction === "live") {
+      model.selectedCctvFeed = model.selectedSensorId;
+      model.cctvWorkspaceOpen = true;
+      setActiveView("incidents");
+      setIncidentTab("active", { focus: false });
+      renderCctvWorkspace();
+    } else {
+      setActiveView("sensors");
+      renderSensorNetwork();
+    }
+    return;
+  }
+  const detectionTarget = event.target.closest("[data-detection-action]");
+  if (!detectionTarget) return;
+  const incident = incidentManager.get(detectionTarget.dataset.incidentId);
+  if (detectionTarget.dataset.detectionAction === "promote" && incident) {
+    incidentManager.update(incident.id, { state: "AWAITING_HUMAN_DECISION", reviewState: "AWAITING_HUMAN_DECISION", minimized: true, decision: "Promoted from low-confidence detection log" });
+    syncOperationsState();
+    setActiveView("incidents");
+    setIncidentTab("pending");
+    showToast(`${incident.id} promoted to human review`);
+  } else showToast(`${detectionTarget.dataset.incidentId} remains under passive monitoring`);
+}
+
 function minimiseNavigationView() {
   model.navigationMinimized = true;
   model.cctvWorkspaceOpen = true;
@@ -2004,6 +2299,8 @@ function minimiseNavigationView() {
   renderCctvWorkspace();
   renderResponderCard();
   updatePhaseUi();
+  setActiveView("incidents", { focus: false });
+  setIncidentTab("active", { focus: false });
   elements.restoreNavigation.focus();
 }
 
@@ -2011,6 +2308,7 @@ function restoreNavigationView() {
   model.navigationMinimized = false;
   model.cctvWorkspaceOpen = false;
   model.cameraMode = "responder";
+  setActiveView("responders", { focus: false });
   renderCctvWorkspace();
   renderResponderCard();
   updatePhaseUi();
@@ -2043,6 +2341,10 @@ function trapArrivalButtonFocus(event) {
 
 async function init() {
   bindControls();
+  const initialView = WORKSPACE_IDS.has(location.hash.slice(1)) ? location.hash.slice(1) : "incidents";
+  if (location.hash !== `#${initialView}`) history.replaceState({ view: initialView }, "", `${location.pathname}${location.search}#${initialView}`);
+  setIncidentTab("active", { focus: false });
+  setActiveView(initialView, { updateHistory: false, focus: false });
   drawMapBase();
   renderHistory();
   syncOperationsState();
@@ -2063,6 +2365,7 @@ async function init() {
   }
   elements.body.dataset.simulationState = PHASES.NORMAL;
   updatePhaseUi();
+  renderWorkspaceData();
 }
 
 function setBackendStatus(status, text) { elements.backendState.textContent = text; elements.backendHealth.classList.toggle("is-online", status === "online"); elements.backendHealth.classList.toggle("is-offline", status === "offline"); }

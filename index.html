@@ -24,16 +24,45 @@
       </div>
     </header>
 
+    <div class="global-status-bar" aria-label="Global operations status">
+      <span><i class="status-dot" aria-hidden="true"></i><b id="global-system-status">System normal</b></span>
+      <span>Critical <b id="global-critical-count">0</b></span>
+      <span>Pending review <b id="global-pending-count">0</b></span>
+      <span>Active response <b id="global-response-count">0</b></span>
+      <span>Sensors <b id="global-sensor-health">6/6 online</b></span>
+      <time id="global-clock">--:--:--</time>
+    </div>
+
     <div class="app-frame">
       <nav class="side-rail" aria-label="Command center sections">
-        <button class="rail-button" type="button" aria-label="Overview" data-tooltip="Overview"><span aria-hidden="true">H</span></button>
-        <button class="rail-button active" type="button" aria-label="Live incidents" data-tooltip="Live incidents"><span aria-hidden="true">A</span></button>
-        <button class="rail-button" type="button" aria-label="Sensor network" data-tooltip="Sensor network"><span aria-hidden="true">N</span></button>
-        <button class="rail-button" type="button" aria-label="Responders" data-tooltip="Responders"><span aria-hidden="true">R</span></button>
-        <button class="rail-button rail-bottom" type="button" aria-label="Settings" data-tooltip="Settings"><span aria-hidden="true">S</span></button>
+        <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false"><span aria-hidden="true">Menu</span></button>
+        <div id="primary-nav-items" class="primary-nav-items">
+          <button class="rail-button" type="button" data-view="overview" aria-label="Open Overview - keyboard shortcut O"><span>Overview</span><kbd>O</kbd></button>
+          <button class="rail-button active" type="button" data-view="incidents" aria-current="page" aria-label="Open Incidents - keyboard shortcut I"><span>Incidents</span><kbd>I</kbd><b id="nav-incident-count" class="nav-count" aria-label="Critical and high-priority incidents">0</b></button>
+          <button class="rail-button" type="button" data-view="sensors" aria-label="Open Sensor Network - keyboard shortcut S"><span>Sensor Network</span><kbd>S</kbd></button>
+          <button class="rail-button" type="button" data-view="responders" aria-label="Open Responders - keyboard shortcut R"><span>Responders</span><kbd>R</kbd><b id="nav-response-count" class="nav-count" aria-label="Active responders">0</b></button>
+        </div>
       </nav>
 
       <main class="operations" aria-label="Urban crash detection and emergency response simulator">
+        <section id="view-overview" class="workspace-view" data-workspace="overview" aria-labelledby="overview-title" hidden>
+          <header class="workspace-heading"><div><span class="section-kicker">City operations</span><h1 id="overview-title" tabindex="-1">Overview</h1></div><p>City-wide incidents, infrastructure and response posture</p></header>
+          <div id="overview-summary" class="summary-grid" aria-label="City operations summary"></div>
+          <div id="overview-stage-slot" class="workspace-stage-slot"></div>
+          <section class="workspace-band recent-activity"><header><div><span class="section-kicker">Operations stream</span><h2>Recent activity</h2></div><button type="button" data-view-target="incidents" data-incident-tab="resolved">View All Activity</button></header><ol id="recent-activity-list"></ol></section>
+        </section>
+
+        <section id="view-incidents" class="workspace-view is-active" data-workspace="incidents" aria-labelledby="incidents-title">
+          <header class="workspace-heading"><div><span class="section-kicker">Primary workspace</span><h1 id="incidents-title" tabindex="-1">Incidents</h1></div><p>Live detection, evidence, decisions and outcomes</p></header>
+          <div class="workspace-tabs" role="tablist" aria-label="Incident views">
+            <button type="button" role="tab" data-incident-tab="active" aria-selected="true" aria-controls="incident-tab-active">Active <b id="active-tab-count">0</b></button>
+            <button type="button" role="tab" data-incident-tab="pending" aria-selected="false" aria-controls="incident-tab-pending">Pending Review <b id="pending-tab-count">0</b></button>
+            <button type="button" role="tab" data-incident-tab="detection" aria-selected="false" aria-controls="incident-tab-detection">Detection Log <b id="detection-tab-count">0</b></button>
+            <button type="button" role="tab" data-incident-tab="resolved" aria-selected="false" aria-controls="incident-tab-resolved">Resolved <b id="resolved-tab-count">0</b></button>
+          </div>
+          <section id="incident-tab-active" class="incident-tab-panel is-active" role="tabpanel">
+            <div id="active-incident-list" class="entity-strip" aria-label="Active incidents"></div>
+            <div id="incident-stage-slot" class="workspace-stage-slot">
         <section class="simulation-stage" aria-labelledby="simulation-title">
           <h1 id="simulation-title" class="sr-only">Interactive 3D smart-city crash simulation</h1>
           <div id="three-scene" class="three-scene">
@@ -195,7 +224,34 @@
             </section>
           </section>
         </section>
+            </div>
+          </section>
+          <section id="incident-tab-pending" class="incident-tab-panel" role="tabpanel" hidden>
+            <header class="panel-heading"><div><span class="section-kicker">Human-in-the-loop</span><h2>Pending Human Review</h2></div><span>Critical vulnerable-road-user cases are prioritised</span></header>
+            <aside id="review-queue" class="review-queue is-open" aria-label="Pending Human Review"><button id="toggle-review-queue" class="queue-heading" type="button" aria-expanded="true"><span>Pending Human Review</span><strong id="queue-count">0</strong></button><div id="review-queue-list" class="review-queue-list"><p>No incidents awaiting review</p></div></aside>
+          </section>
+          <section id="incident-tab-detection" class="incident-tab-panel" role="tabpanel" hidden>
+            <header class="panel-heading"><div><span class="section-kicker">Quiet correlation queue</span><h2>Detection Log</h2></div><label class="log-search">Search <input id="detection-search" type="search" placeholder="Incident, camera or location"></label></header>
+            <div class="filter-row" role="group" aria-label="Detection filters"><button type="button" data-log-filter="all" aria-pressed="true">All</button><button type="button" data-log-filter="low">Low confidence</button><button type="button" data-log-filter="false">False alarms</button></div>
+            <div id="detection-log-list" class="detection-log-list"></div>
+          </section>
+          <section id="incident-tab-resolved" class="incident-tab-panel" role="tabpanel" hidden>
+            <details class="incident-history" open>
+              <summary><span>Incident history</span><span><b id="review-count">0</b> awaiting review</span></summary>
+              <div class="history-toolbar"><span>Dispatcher decisions and response outcomes</span><button id="clear-history" type="button">Clear History</button></div>
+              <div class="table-wrap"><table><thead><tr><th>Incident</th><th>Time</th><th>Location</th><th>Trigger</th><th>Vision</th><th>Audio</th><th>Fusion</th><th>Decision</th><th>Dispatch</th><th>Response</th><th>Notes</th></tr></thead><tbody id="history-body"><tr class="empty-history"><td colspan="11">No completed demonstrations yet</td></tr></tbody></table></div>
+            </details>
+          </section>
+        </section>
 
+        <section id="view-sensors" class="workspace-view" data-workspace="sensors" aria-labelledby="sensors-title" hidden>
+          <header class="workspace-heading"><div><span class="section-kicker">Infrastructure assurance</span><h1 id="sensors-title" tabindex="-1">Sensor Network</h1></div><p>Coverage, signal quality and linked detections</p></header>
+          <div id="sensor-summary" class="summary-grid summary-grid-compact"></div>
+          <div class="sensor-workspace">
+            <section class="entity-panel"><header><span class="section-kicker">Deployed infrastructure</span><h2>Sensor list</h2></header><div id="sensor-list" class="entity-list"></div></section>
+            <section id="sensor-detail" class="entity-detail" aria-live="polite"></section>
+            <div id="sensor-map-slot" class="sensor-map-slot"></div>
+          </div>
         <section class="network-strip" aria-labelledby="network-title">
           <div class="network-heading">
             <div><span class="section-kicker">Time difference of arrival</span><h2 id="network-title">Sensor network telemetry</h2></div>
@@ -208,21 +264,17 @@
             </table>
           </div>
         </section>
+        </section>
 
-        <details class="incident-history">
-          <summary><span>Incident history</span><span><b id="review-count">0</b> awaiting review</span></summary>
-          <div class="history-toolbar"><span>Dispatcher decisions and response outcomes</span><button id="clear-history" type="button">Clear History</button></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Incident</th><th>Time</th><th>Location</th><th>Trigger</th><th>Vision</th><th>Audio</th><th>Fusion</th><th>Decision</th><th>Dispatch</th><th>Response</th><th>Notes</th></tr></thead>
-              <tbody id="history-body"><tr class="empty-history"><td colspan="11">No completed demonstrations yet</td></tr></tbody>
-            </table>
-          </div>
-        </details>
+        <section id="view-responders" class="workspace-view" data-workspace="responders" aria-labelledby="responders-title" hidden>
+          <header class="workspace-heading"><div><span class="section-kicker">Emergency resources</span><h1 id="responders-title" tabindex="-1">Responders</h1></div><p>Availability, assignments, navigation and on-scene response</p></header>
+          <div id="responder-summary" class="summary-grid summary-grid-compact"></div>
+          <div id="unit-list" class="entity-strip responder-entity-strip" aria-label="Response units"></div>
+          <div id="responder-stage-slot" class="workspace-stage-slot"><div class="empty-workspace"><strong>Select an assigned unit</strong><span>Navigation and arrival information will appear here without restarting its route.</span></div></div>
+        </section>
       </main>
     </div>
 
-    <aside id="review-queue" class="review-queue" aria-label="Pending Human Review"><button id="toggle-review-queue" class="queue-heading" type="button" aria-expanded="false"><span>Pending Human Review</span><strong id="queue-count">0</strong></button><div id="review-queue-list" class="review-queue-list"><p>No incidents awaiting review</p></div></aside>
     <div id="incident-taskbar" class="incident-taskbar" aria-label="Minimised incident reviews"></div>
     <aside id="responder-card" class="responder-card" hidden aria-label="Minimised responder navigation"><strong id="responder-card-unit">MED-01</strong><span id="responder-card-copy">No active response</span><button id="restore-navigation" type="button">Return to Navigation</button></aside>
     <div id="operations-toast" class="operations-toast" hidden role="status"></div>
