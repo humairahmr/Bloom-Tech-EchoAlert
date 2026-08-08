@@ -29,6 +29,7 @@ const CRASHED_PHASES = new Set([
   "REROUTING",
   "RESPONDER_ARRIVED",
   "CLEARED"
+  ,"PEDESTRIAN_APPROACH","PEDESTRIAN_CONTACT","SUSPECT_FLEEING","VEHICLE_TRACKING","HUMAN_REVIEW_REQUIRED"
 ]);
 
 const NAVIGATION_PHASES = new Set(["ROUTE_CALCULATING", "DISPATCHED", "NAVIGATING", "REROUTING", "RESPONDER_ARRIVED"]);
@@ -61,6 +62,19 @@ function createLabelSprite(text, color = "#d7e1df") {
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
   sprite.scale.set(5.8, 1.08, 1);
   return sprite;
+}
+
+function createPedestrian() {
+  const group = new THREE.Group();
+  const clothing = material(0x37a6b8, { roughness: .9 });
+  const skin = material(0xd9aa84, { roughness: 1 });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.36, .8, 5, 8), clothing);
+  torso.position.y = 1.55;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.3, 12, 8), skin);
+  head.position.y = 2.55;
+  group.add(torso, head);
+  [-.2,.2].forEach((x) => { const leg = box(.18,.9,.2,material(0x182126)); leg.position.set(x,.55,0); group.add(leg); });
+  return group;
 }
 
 function createVehicle(color, { ambulance = false } = {}) {
@@ -234,7 +248,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.domElement.className = "road-scene-canvas";
   renderer.domElement.setAttribute("aria-label", "Interactive 3D smart-city intersection crash simulation");
   container.appendChild(renderer.domElement);
@@ -366,9 +380,26 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   scene.add(carA, carB);
   const carALabel = createLabelSprite("VEH-214", "#74d5e7");
   const carBLabel = createLabelSprite("VEH-927", "#dfe7e5");
+  const suspectLabel = createLabelSprite("VEHICLE-07", "#f2b84b");
   carALabel.scale.multiplyScalar(0.72);
   carBLabel.scale.multiplyScalar(0.72);
-  scene.add(carALabel, carBLabel);
+  suspectLabel.scale.multiplyScalar(.72);
+  scene.add(carALabel, carBLabel, suspectLabel);
+
+  const pedestrian = createPedestrian();
+  const pedestrianLabel = createLabelSprite("PEDESTRIAN-02", "#f2b84b");
+  pedestrianLabel.scale.multiplyScalar(.7);
+  pedestrian.visible = false;
+  pedestrianLabel.visible = false;
+  scene.add(pedestrian, pedestrianLabel);
+
+  const suspectTrail = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(1.2,.25,-8),new THREE.Vector3(1.2,.25,28)]), new THREE.LineDashedMaterial({ color: COLORS.amber, dashSize: 1, gapSize: .55, transparent: true, opacity: .8 }));
+  suspectTrail.computeLineDistances(); suspectTrail.visible = false; scene.add(suspectTrail);
+
+  const cctvFive = new THREE.Group();
+  const cctvFivePole = box(.22,5,.22,material(0x46565a)); cctvFivePole.position.y = 2.5;
+  const cctvFiveBody = box(1.1,.45,.55,material(0x68787c)); cctvFiveBody.position.set(.4,5,0); cctvFive.add(cctvFivePole,cctvFiveBody); cctvFive.position.set(-9,0,25); scene.add(cctvFive);
+  const cctvFiveLabel = createLabelSprite("CCTV #05", "#36c5dd"); cctvFiveLabel.position.set(-9,6.5,25); scene.add(cctvFiveLabel);
 
   const ambulance = createVehicle(0xe9eeee, { ambulance: true });
   ambulance.position.set(-27, 0, 4.2);
@@ -376,6 +407,11 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   const ambulanceLabel = createLabelSprite("MED-01", "#ff6d73");
   ambulanceLabel.scale.multiplyScalar(0.72);
   scene.add(ambulanceLabel);
+  const ambulanceTwo = createVehicle(0xe9eeee, { ambulance: true }); ambulanceTwo.position.set(-27,0,-4.2); scene.add(ambulanceTwo);
+  const ambulanceTwoLabel = createLabelSprite("MED-02", "#ff6d73"); ambulanceTwoLabel.scale.multiplyScalar(.72); scene.add(ambulanceTwoLabel);
+
+  const incidentMarkerGroup = new THREE.Group(); scene.add(incidentMarkerGroup);
+  const renderedIncidentMarkers = new Map();
 
   const markerMaterial = new THREE.MeshBasicMaterial({ color: COLORS.amber, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
   const crashMarker = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.7, 48), markerMaterial);
@@ -432,9 +468,10 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     particles.visible = true;
     for (let index = 0; index < particleCount; index += 1) {
       const offset = index * 3;
-      particlePositions[offset] = (Math.random() - 0.5) * 1.2;
+      const event = getState().eventPosition || { x: 0, z: 0 };
+      particlePositions[offset] = event.x + (Math.random() - 0.5) * 1.2;
       particlePositions[offset + 1] = 0.65 + Math.random() * 0.8;
-      particlePositions[offset + 2] = (Math.random() - 0.5) * 1.2;
+      particlePositions[offset + 2] = event.z + (Math.random() - 0.5) * 1.2;
       particleVelocities[index].set((Math.random() - 0.5) * 7, 2 + Math.random() * 6, (Math.random() - 0.5) * 7);
     }
     particleGeometry.attributes.position.needsUpdate = true;
@@ -501,27 +538,51 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     carB.rotation.y = state.carB.rotation;
     carALabel.position.set(state.carA.x, 3.45, state.carA.z);
     carBLabel.position.set(state.carB.x, 3.45, state.carB.z);
+    const pedestrianScenario = ["pedestrian","concurrent"].includes(state.activeScenario);
+    carBLabel.visible = !pedestrianScenario;
+    suspectLabel.visible = pedestrianScenario;
+    suspectLabel.position.set(state.carB.x,3.45,state.carB.z);
 
-    const ambulancePosition = new THREE.Vector3(state.ambulance.x, 0, state.ambulance.z);
-    ambulance.position.copy(ambulancePosition);
-    ambulance.rotation.y = state.ambulance.rotation;
-    ambulanceLabel.position.set(ambulancePosition.x, 4.25, ambulancePosition.z);
-    ambulance.visible = true;
-    ambulanceLabel.visible = !NAVIGATION_PHASES.has(state.phase) || state.cameraMode !== "responder";
+    const pedestrianState = state.pedestrian || { visible: false };
+    pedestrian.visible = pedestrianState.visible;
+    pedestrian.position.set(pedestrianState.x || 0,pedestrianState.stationary ? .72 : .38,pedestrianState.z || 0);
+    pedestrian.rotation.z = pedestrianState.rotationZ || 0;
+    pedestrianLabel.visible = pedestrianState.visible && !pedestrianState.stationary;
+    pedestrianLabel.position.set(pedestrianState.x || 0,3.8,pedestrianState.z || 0);
+    suspectTrail.visible = Boolean(state.suspectTrackingActive);
 
-    const emergencyActive = NAVIGATION_PHASES.has(state.phase);
-    ambulance.userData.emergencyLights.forEach((bulb, index) => {
-      const active = emergencyActive && Math.floor(state.elapsed * 5) % 2 === index;
-      bulb.material.emissiveIntensity = active ? 5 : 0.05;
-      ambulance.userData.emergencyReflections[index].intensity = active ? 4 : 0;
+    const units = state.units || [];
+    updateUnitMesh(ambulance,ambulanceLabel,units.find((unit) => unit.id === "MED-01") || { id:"MED-01",position:state.ambulance,status:NAVIGATION_PHASES.has(state.phase)?"EN_ROUTE":"AVAILABLE" },state);
+    updateUnitMesh(ambulanceTwo,ambulanceTwoLabel,units.find((unit) => unit.id === "MED-02") || { id:"MED-02",position:{x:-28,z:-4.2,rotation:0},status:"AVAILABLE" },state);
+  }
+
+  function updateUnitMesh(mesh,label,unit,state) {
+    const position = unit.position || unit;
+    mesh.position.set(position.x,0,position.z); mesh.rotation.y = position.rotation || 0;
+    label.position.set(position.x,4.25,position.z);
+    label.visible = !(state.activeNavigationUnit === unit.id && state.cameraMode === "responder" && !state.navigationMinimized);
+    const emergency = ["EN_ROUTE","ON_SCENE"].includes(unit.status);
+    mesh.userData.emergencyLights.forEach((bulb,index) => { const active = emergency && Math.floor(state.elapsed * 6)%2 === index; bulb.material.emissiveIntensity = active ? 5 : .05; mesh.userData.emergencyReflections[index].intensity = active ? 4 : 0; });
+  }
+
+  function syncIncidentMarkers(state) {
+    const activeIds = new Set((state.incidents || []).map((incident) => incident.id));
+    renderedIncidentMarkers.forEach((marker,id) => { if (!activeIds.has(id)) { incidentMarkerGroup.remove(marker); renderedIncidentMarkers.delete(id); } });
+    (state.incidents || []).forEach((incident) => {
+      let marker = renderedIncidentMarkers.get(incident.id);
+      if (!marker) { marker = new THREE.Mesh(new THREE.RingGeometry(1.3,1.72,36),new THREE.MeshBasicMaterial({color:COLORS.amber,transparent:true,opacity:.85,side:THREE.DoubleSide})); marker.rotation.x=-Math.PI/2; marker.position.y=.55; incidentMarkerGroup.add(marker); renderedIncidentMarkers.set(incident.id,marker); }
+      const color = incident.policeUnit ? 0x9b6dff : incident.assignedUnit ? COLORS.blue : ["CONFIRMED_INCIDENT","RESPONDER_ARRIVED"].includes(incident.state) ? COLORS.red : ["FALSE_ALARM","CLOSED"].includes(incident.state) ? 0x6d898e : COLORS.amber;
+      marker.position.x = incident.position?.x || 0; marker.position.z = incident.position?.z || 0; marker.material.color.setHex(color);
+      marker.material.opacity = incident.minimized ? .45 + Math.sin(state.elapsed*6)*.25 : .88;
     });
   }
 
   function updateDetectionVisuals(state) {
+    syncIncidentMarkers(state);
     const suspected = ["SUSPECTED_EVENT", "VISION_DETECTED", "AUDIO_DETECTED", "FUSION_VERIFYING", "SENSOR_MISMATCH", "FALSE_ALARM", "AWAITING_HUMAN_REVIEW"].includes(state.phase);
     const confirmed = ["CRITICAL_CONFIRMED", "ROUTE_CALCULATING", "DISPATCHED", "NAVIGATING", "REROUTING", "RESPONDER_ARRIVED"].includes(state.phase);
     const cleared = state.phase === "CLEARED";
-    crashMarker.visible = suspected || confirmed || cleared;
+    crashMarker.visible = !(state.incidents?.length) && (suspected || confirmed || cleared);
     crashMarker.position.x = state.eventPosition?.x || 0;
     crashMarker.position.z = state.eventPosition?.z || 0;
     crashMarker.material.color.setHex(confirmed ? COLORS.red : cleared ? 0x6d898e : COLORS.amber);
@@ -532,11 +593,11 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     investigationRadius.position.z = crashMarker.position.z;
     investigationRadius.rotation.z = state.elapsed * 0.12;
 
-    cctvScan.visible = ["VISION_DETECTED", "AUDIO_DETECTED", "FUSION_VERIFYING", "SENSOR_MISMATCH", "FALSE_ALARM", "CRITICAL_CONFIRMED"].includes(state.phase);
+    cctvScan.visible = ["VISION_DETECTED", "AUDIO_DETECTED", "FUSION_VERIFYING", "SENSOR_MISMATCH", "FALSE_ALARM", "CRITICAL_CONFIRMED","PEDESTRIAN_APPROACH","PEDESTRIAN_CONTACT","SUSPECT_FLEEING","VEHICLE_TRACKING","HUMAN_REVIEW_REQUIRED"].includes(state.phase);
     if (cctvScan.visible) cctvScan.geometry.setFromPoints([new THREE.Vector3(-10.1, 5.4, 9.8), new THREE.Vector3(crashMarker.position.x, 0.5, crashMarker.position.z)]);
     if (cctvScan.visible) cctvScan.material.opacity = 0.38 + Math.sin(state.elapsed * 10) * 0.25;
 
-    const audioActive = ["AUDIO_DETECTED", "FUSION_VERIFYING"].includes(state.phase) && state.activeScenario !== "sudden_stop";
+    const audioActive = ["AUDIO_DETECTED", "FUSION_VERIFYING","PEDESTRIAN_CONTACT","SUSPECT_FLEEING","VEHICLE_TRACKING"].includes(state.phase) && state.activeScenario !== "sudden_stop";
     audioPath.visible = audioActive;
     audioPulse.visible = audioActive;
     if (audioActive) {
@@ -552,7 +613,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
       hardware.micRing.material.emissiveIntensity = 0.8;
     }
 
-    impactPulse.visible = state.phase === "IMPACT" && state.phaseElapsed < 0.8;
+    impactPulse.visible = ["IMPACT","PEDESTRIAN_CONTACT"].includes(state.phase) && state.phaseElapsed < 0.8;
     if (impactPulse.visible) {
       const scale = 1 + state.phaseElapsed * 8;
       impactPulse.scale.setScalar(scale);
@@ -565,8 +626,9 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     constructionSource.visible = state.activeScenario === "loud_noise" && suspected;
     if (constructionSource.visible) constructionBeacon.material.emissiveIntensity = 0.8 + Math.sin(state.elapsed * 14) * 0.7;
     if (renderedRouteVersion !== state.routeVersion) rebuildRoute(state);
-    routeGroup.visible = NAVIGATION_PHASES.has(state.phase);
-    blockedRouteGroup.visible = NAVIGATION_PHASES.has(state.phase);
+    const emergencyActive = state.units?.some((unit) => ["RESERVED","EN_ROUTE","ON_SCENE"].includes(unit.status)) || NAVIGATION_PHASES.has(state.phase);
+    routeGroup.visible = emergencyActive;
+    blockedRouteGroup.visible = emergencyActive;
     routeGroup.children.forEach((child) => {
       if (!child.isMesh || child.userData.segmentIndex == null) return;
       const segment = state.routeSegments?.[child.userData.segmentIndex];
@@ -577,7 +639,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
       child.material.opacity = completed ? 0.5 : 0.94;
     });
     trafficLights.forEach((light) => {
-      const priority = NAVIGATION_PHASES.has(state.phase);
+      const priority = state.units?.some((unit) => unit.status === "EN_ROUTE") || NAVIGATION_PHASES.has(state.phase);
       light.userData.bulbs.red.material.emissiveIntensity = priority ? 0.05 : 1.2;
       light.userData.bulbs.green.material.emissiveIntensity = priority ? 3.2 : 1.1;
     });
@@ -586,26 +648,30 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   function updateCamera(state, delta) {
     const incidentFocus = CRASHED_PHASES.has(state.phase);
     let desiredPosition = incidentFocus ? new THREE.Vector3(20, 17, 21) : new THREE.Vector3(27, 23, 28);
-    let desiredTarget = new THREE.Vector3(0, 0.8, 0);
-    if (NAVIGATION_PHASES.has(state.phase)) {
-      const ambulancePosition = new THREE.Vector3(state.ambulance.x, 0, state.ambulance.z);
-      const forward = new THREE.Vector3(Math.cos(state.ambulance.rotation), 0, -Math.sin(state.ambulance.rotation));
+    const selected = state.incidents?.find((incident) => incident.id === state.selectedIncidentId)?.position;
+    let desiredTarget = new THREE.Vector3(selected?.x || 0, 0.8, selected?.z || 0);
+    const activeUnit = state.units?.find((unit) => unit.id === state.activeNavigationUnit);
+    if ((activeUnit || NAVIGATION_PHASES.has(state.phase)) && !state.navigationMinimized) {
+      const activePosition = activeUnit?.position || state.ambulance;
+      const ambulancePosition = new THREE.Vector3(activePosition.x, 0, activePosition.z);
+      const forward = new THREE.Vector3(Math.cos(activePosition.rotation || 0), 0, -Math.sin(activePosition.rotation || 0));
       if (state.cameraMode === "topdown") {
         desiredTarget = ambulancePosition.clone();
         desiredPosition = ambulancePosition.clone().add(new THREE.Vector3(0, 32, 0.01));
       } else if (state.cameraMode === "incident" || state.phase === "RESPONDER_ARRIVED") {
-        desiredTarget = new THREE.Vector3(0, 0.8, 0);
-        desiredPosition = new THREE.Vector3(18, 19, 20);
+        desiredTarget = new THREE.Vector3(selected?.x || 0, 0.8, selected?.z || 0);
+        desiredPosition = desiredTarget.clone().add(new THREE.Vector3(18,19,20));
       } else {
-        const turnPullback = state.navigationInstruction?.manoeuvre?.startsWith("Turn") ? 3 : 0;
-        desiredTarget = ambulancePosition.clone().add(forward.clone().multiplyScalar(4)).setY(1.1);
-        desiredPosition = ambulancePosition.clone().add(forward.clone().multiplyScalar(-11 - turnPullback)).add(new THREE.Vector3(0, 8 + turnPullback, 0));
+        const speedRatio = Math.min(1,(activeUnit?.speedMps || 0)/30.5);
+        const turnPullback = (activeUnit?.instruction || state.navigationInstruction)?.manoeuvre?.startsWith("Turn") ? 3 : 0;
+        desiredTarget = ambulancePosition.clone().add(forward.clone().multiplyScalar(4 + speedRatio*6)).setY(1.1);
+        desiredPosition = ambulancePosition.clone().add(forward.clone().multiplyScalar(-10-speedRatio*5-turnPullback)).add(new THREE.Vector3(0,7+speedRatio*2+turnPullback,0));
       }
     }
     const smoothing = state.reducedMotion ? 1 : Math.min(1, delta * 2.8);
     camera.position.lerp(desiredPosition, smoothing);
     cameraTarget.lerp(desiredTarget, smoothing);
-    if (state.phase === "IMPACT" && !state.reducedMotion && state.phaseElapsed < 0.45) {
+    if (["IMPACT","PEDESTRIAN_CONTACT"].includes(state.phase) && !state.reducedMotion && state.phaseElapsed < 0.45) {
       const intensity = (1 - state.phaseElapsed / 0.45) * 0.22;
       camera.position.x += (Math.random() - 0.5) * intensity;
       camera.position.y += (Math.random() - 0.5) * intensity;
@@ -625,7 +691,15 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     const replayElapsed = (now - state.modalOpenedAt) % 3600;
     const replayProgress = clamp01(replayElapsed / 2200);
     const eased = replayProgress * replayProgress * (3 - 2 * replayProgress);
-    if (state.activeScenario === "sudden_stop") {
+    if (state.activeScenario === "pedestrian") {
+      const crossing = clamp01(replayElapsed / 1100);
+      const leaving = clamp01((replayElapsed - 1250) / 1700);
+      pedestrian.visible = true;
+      pedestrian.position.set(-5.2 + 5.2 * crossing, leaving > .05 ? .72 : .38, -8);
+      pedestrian.rotation.z = leaving > .05 ? Math.PI / 2 : 0;
+      carB.position.set(1.2,0,-18 + 10.5 * crossing + 28 * leaving);
+      carB.rotation.y = -Math.PI / 2;
+    } else if (state.activeScenario === "sudden_stop") {
       carA.position.set(-15 + 9 * eased, 0, -1.15);
       carA.rotation.y = 0;
       carB.position.set(1.15, 0, 11 - 6 * replayProgress);
@@ -646,6 +720,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     carA.rotation.y = savedA.rotation;
     carB.position.copy(savedB.position);
     carB.rotation.y = savedB.rotation;
+    pedestrian.visible = state.pedestrian?.visible || false;
   }
 
   function resize() {

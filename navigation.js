@@ -3,6 +3,10 @@ const EMERGENCY_SPEED_MPS = 20;
 
 export const ROAD_NODES = Object.freeze({
   S: { id: "S", x: -28, z: 4.2, name: "MED-01 Standby Bay" },
+  S2: { id: "S2", x: -28, z: -4.2, name: "MED-02 Hospital Bay" },
+  W2: { id: "W2", x: -20, z: -4.2, name: "Hospital Access Road" },
+  C2: { id: "C2", x: -10, z: -4.2, name: "Southern Emergency Lane" },
+  J2: { id: "J2", x: -4.2, z: -4.2, name: "Intersection 4 South" },
   W: { id: "W", x: -20, z: 4.2, name: "Jalan Tun Abang Haji Openg" },
   C: { id: "C", x: -10, z: 4.2, name: "Jalan Awang Ramli Amit" },
   J: { id: "J", x: -4.2, z: 4.2, name: "Intersection 4" },
@@ -13,6 +17,10 @@ export const ROAD_NODES = Object.freeze({
 
 const EDGE_DEFINITIONS = [
   ["S", "W", "Jalan Tun Abang Haji Openg", 0, true],
+  ["S2", "W2", "Hospital Access Road", 0, true],
+  ["W2", "C2", "Southern Emergency Lane", 0, true],
+  ["C2", "J2", "Jalan Awang Ramli Amit South", 0, true],
+  ["J2", "J", "Intersection 4 South", 0, true],
   ["W", "C", "Lebuh Barat", 1, true],
   ["C", "J", "Jalan Awang Ramli Amit", 0, true],
   ["J", "D", "Intersection 4 Access", 0, true],

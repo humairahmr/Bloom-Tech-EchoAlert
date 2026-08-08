@@ -1,8 +1,9 @@
 import { createRoadScene } from "./scene3d.js";
+import { IncidentManager } from "./incident-manager.js";
+import { UnitManager } from "./unit-manager.js";
 import {
   ROAD_NODES,
   findFastestRoute,
-  navigationConstants,
   navigationInstruction,
   poseAlongRoute,
   prependCurrentPosition,
@@ -27,17 +28,26 @@ const PHASES = Object.freeze({
   REROUTING: "REROUTING",
   RESPONDER_ARRIVED: "RESPONDER_ARRIVED",
   CLEARED: "CLEARED"
+  ,PEDESTRIAN_APPROACH: "PEDESTRIAN_APPROACH"
+  ,PEDESTRIAN_CONTACT: "PEDESTRIAN_CONTACT"
+  ,SUSPECT_FLEEING: "SUSPECT_FLEEING"
+  ,VEHICLE_TRACKING: "VEHICLE_TRACKING"
+  ,HUMAN_REVIEW_REQUIRED: "HUMAN_REVIEW_REQUIRED"
 });
 
 const SCENARIOS = Object.freeze({
   confirmed: { button: "Simulate Confirmed Crash", trigger: "Vehicle collision" },
   sudden_stop: { button: "Simulate Sudden-Stop Alert", trigger: "Rapid deceleration" },
-  loud_noise: { button: "Simulate Loud-Noise Alert", trigger: "High-amplitude sound" }
+  loud_noise: { button: "Simulate Loud-Noise Alert", trigger: "High-amplitude sound" },
+  pedestrian: { button: "SIMULATE HIT-AND-RUN", trigger: "Pedestrian-vehicle conflict" },
+  concurrent: { button: "Simulate Concurrent Incidents", trigger: "Concurrent city incidents" }
 });
 
 const NAVIGATION_PHASES = new Set([PHASES.ROUTE_CALCULATING, PHASES.NAVIGATING, PHASES.REROUTING, PHASES.RESPONDER_ARRIVED]);
 const VERIFICATION_WINDOW_MS = 1500;
 const $ = (selector) => document.querySelector(selector);
+const incidentManager = new IncidentManager();
+const unitManager = new UnitManager();
 
 const model = {
   phase: PHASES.NORMAL,
@@ -52,6 +62,7 @@ const model = {
   approachStartA: -23,
   approachStartB: 23,
   vehicleSpeed: 48,
+  responderSpeedMps: 0,
   eventPosition: { x: 0, z: 0 },
   impactToken: -1,
   impactIso: null,
@@ -88,7 +99,22 @@ const model = {
   history: [],
   reviewQueue: [],
   localIncidentCounter: 0,
-  falseResultRecorded: false
+  falseResultRecorded: false,
+  incidents: incidentManager.list(),
+  units: unitManager.list(),
+  selectedIncidentId: incidentManager.selectedId,
+  activeNavigationUnit: null,
+  navigationMinimized: false,
+  pedestrian: { visible: false, x: -5.2, z: -8, rotationZ: 0, stationary: false },
+  suspectTrackingActive: false,
+  secondCameraTracking: false,
+  selectedCctvFeed: "CCTV #04",
+  cctvGridMode: false,
+  cctvWorkspaceOpen: false,
+  lastOperationsRender: 0,
+  pendingNewIncidentId: null,
+  confirmationAction: "minimise"
+  ,concurrentMode: false
 };
 
 let sensors = [];
@@ -107,6 +133,8 @@ const elements = {
   simulate: $("#simulate-crash"),
   simulateLabel: $("#simulate-label"),
   reset: $("#reset-simulation"),
+  resetSelected: $("#reset-selected"),
+  simulateSecond: $("#simulate-second"),
   scenario: $("#scenario-select"),
   follow: $("#follow-incident"),
   noise: $("#noise-level"),
@@ -133,6 +161,7 @@ const elements = {
   estimateLabel: $("#estimate-label"),
   modal: $("#emergency-modal"),
   emergencyTitle: $("#emergency-title"),
+  emergencySubtitle: $("#emergency-subtitle"),
   modalIncidentId: $("#modal-incident-id"),
   modalCoordinates: $("#modal-coordinates"),
   modalLocation: $("#modal-location"),
@@ -163,6 +192,13 @@ const elements = {
   dispatch: $("#dispatch-btn"),
   falseAlarm: $("#false-alarm-btn"),
   humanReview: $("#human-review-btn"),
+  pedestrianDetectionBox: $("#pedestrian-detection-box"),
+  pedestrianFacts: [...document.querySelectorAll(".pedestrian-fact")],
+  modalTrackingIds: $("#modal-tracking-ids"), modalPlate: $("#modal-plate"), modalLastKnown: $("#modal-last-known"), modalUnits: $("#modal-units"),
+  timelinePanel: $("#event-timeline-panel"), timeline: $("#event-timeline"), notesField: $("#incident-notes-field"), notes: $("#incident-notes"),
+  pedestrianActions: $("#pedestrian-review-actions"), confirmPedestrian: $("#confirm-pedestrian-btn"), dispatchPending: $("#dispatch-pending-btn"), policeCoordination: $("#police-coordination-btn"), pedestrianFalseAlarm: $("#pedestrian-false-alarm-btn"), continuePedestrian: $("#continue-pedestrian-btn"), minimiseReview: $("#minimise-review-btn"),
+  minimiseReviewIcon: $("#minimise-review-icon"), closeReviewIcon: $("#close-review-icon"), unresolvedConfirm: $("#unresolved-confirm"), unresolvedTitle: $("#unresolved-title"), confirmMinimise: $("#confirm-minimise"), returnReview: $("#return-review"),
+  reviewQueueShortcut: $("#review-queue-shortcut"),
   districtLayer: $("#district-layer"),
   roadLayer: $("#road-layer"),
   mapLabelLayer: $("#map-label-layer"),
@@ -175,6 +211,7 @@ const elements = {
   navRoad: $("#nav-road"),
   navEta: $("#nav-eta"),
   navRemaining: $("#nav-remaining"),
+  navSpeed: $("#nav-speed"), navIncident: $("#nav-incident"), navigationUnitId: $("#navigation-unit-id"), minimiseNavigation: $("#minimise-navigation"),
   routeStatus: $("#route-status"),
   guidance: $("#guidance-message"),
   roadBlock: $("#simulate-road-block"),
@@ -187,6 +224,11 @@ const elements = {
   distanceTravelled: $("#distance-travelled"),
   routeChanges: $("#route-changes"),
   handover: $("#handover-response"),
+  cctvWorkspace: $("#cctv-workspace"), cctvFeedList: $("#cctv-feed-list"), cctvMonitorGrid: $("#cctv-monitor-grid"), cctvGridMode: $("#cctv-grid-mode"), returnCity: $("#return-city"),
+  simulateSecondCctv: $("#simulate-second-cctv"),
+  reviewQueue: $("#review-queue"), reviewQueueList: $("#review-queue-list"), queueCount: $("#queue-count"), toggleReviewQueue: $("#toggle-review-queue"), pendingReviewBadge: $("#pending-review-badge"), topReviewCount: $("#top-review-count"), incidentTaskbar: $("#incident-taskbar"),
+  responderCard: $("#responder-card"), responderCardUnit: $("#responder-card-unit"), responderCardCopy: $("#responder-card-copy"), restoreNavigation: $("#restore-navigation"), operationsToast: $("#operations-toast"),
+  newIncidentAlert: $("#new-incident-alert"), openNewIncident: $("#open-new-incident"), keepCurrentReview: $("#keep-current-review"), minimiseOpenNew: $("#minimise-open-new"),
   historyBody: $("#history-body"),
   clearHistory: $("#clear-history"),
   reviewCount: $("#review-count")
@@ -201,6 +243,14 @@ async function api(path, options = {}) {
 
 function phaseCopy() {
   const scenario = model.activeScenario;
+  const pedestrian = {
+    [PHASES.PEDESTRIAN_APPROACH]: ["CONFLICT PREDICTED", "CCTV #04 is tracking PEDESTRIAN-02 and VEHICLE-07", "Road-user conflict", "Road-user conflict predicted", "Listening", "Timeline monitoring", "suspected"],
+    [PHASES.PEDESTRIAN_CONTACT]: ["POSSIBLE PEDESTRIAN COLLISION", "Non-graphic contact warning; independent verification initiated", "Contact suspected", "Pedestrian-vehicle contact suspected", "Possible impact signature detected", "Reconstructing timeline", "suspected"],
+    [PHASES.SUSPECT_FLEEING]: ["SUSPECT VEHICLE LEAVING INCIDENT AREA", "VEHICLE-07 is northbound while PEDESTRIAN-02 remains stationary", "Vehicle departure", "Person stationary on roadway", "Possible impact detected", "Possible pedestrian collision", "suspected"],
+    [PHASES.VEHICLE_TRACKING]: ["VEHICLE TRACKING ACTIVE", "CCTV #05 matched QAB 4721 farther north", "Cross-camera tracking", "Vehicle leaving incident area", "Impact match 96.8%", "Reconstructing incident timeline", "suspected"],
+    [PHASES.HUMAN_REVIEW_REQUIRED]: ["HUMAN REVIEW REQUIRED", "Suspected pedestrian collision with vehicle departure", "Priority human review", "Operational assessment ready", "Possible impact 96.8%", "AWAITING HUMAN DECISION", "suspected"]
+  };
+  if (pedestrian[model.phase]) return pedestrian[model.phase];
   const common = {
     [PHASES.NORMAL]: ["SYSTEM NORMAL", "Traffic and roadside sensors operating normally", "Normal monitoring", "Monitoring", "Listening", "Standby", "normal"],
     [PHASES.IMPACT]: ["IMPACT SUSPECTED", "Sudden stop detected; independent verification initiated", "Impact", "Analysing motion", "Analysing impulse", "Awaiting signals", "suspected"],
@@ -248,9 +298,9 @@ function setPhase(nextPhase) {
   model.phase = nextPhase;
   model.phaseElapsed = 0;
   elements.body.dataset.simulationState = nextPhase;
-  if (nextPhase === PHASES.IMPACT) {
+  if ([PHASES.IMPACT, PHASES.PEDESTRIAN_CONTACT].includes(nextPhase)) {
     model.impactToken += 1;
-    model.impactIso = new Date().toISOString();
+    if (!model.impactIso) model.impactIso = new Date().toISOString();
   }
   if (nextPhase === PHASES.SUSPECTED_EVENT && !model.impactIso) model.impactIso = new Date().toISOString();
   if (nextPhase === PHASES.VISION_DETECTED) model.visionDetectedAt = new Date().toISOString();
@@ -261,6 +311,14 @@ function setPhase(nextPhase) {
     openEvidenceModal("investigation");
   }
   if (nextPhase === PHASES.CRITICAL_CONFIRMED) openEvidenceModal("critical");
+  if (nextPhase === PHASES.HUMAN_REVIEW_REQUIRED) {
+    const incident = incidentManager.get(model.selectedIncidentId);
+    if (incident) {
+      incidentManager.update(incident.id, { state: "AWAITING_HUMAN_DECISION", minimized: false });
+      syncOperationsState();
+      openPedestrianReview(incident.id);
+    }
+  }
   if (nextPhase === PHASES.RESPONDER_ARRIVED) completeArrival();
   updatePhaseUi();
   updateMapIncident();
@@ -287,14 +345,18 @@ function updatePhaseUi() {
   elements.scenario.disabled = model.phase !== PHASES.NORMAL;
   elements.mapStatus.textContent = model.phase === PHASES.NORMAL ? "Standby" : phase;
   elements.mapStatus.style.color = tone === "critical" ? "var(--red)" : tone === "suspected" ? "var(--amber)" : tone === "cleared" ? "var(--cyan)" : "var(--green)";
-  const navigating = NAVIGATION_PHASES.has(model.phase);
+  const activeUnit = unitManager.get(model.activeNavigationUnit);
+  const managedNavigation = activeUnit && ["RESERVED", "EN_ROUTE", "ON_SCENE"].includes(activeUnit.status);
+  const navigating = (NAVIGATION_PHASES.has(model.phase) || managedNavigation) && !model.navigationMinimized;
   elements.navigationHud.classList.toggle("is-active", navigating);
   elements.navigationHud.setAttribute("aria-hidden", String(!navigating));
   elements.operations.dataset.navigationActive = String(navigating);
-  elements.unitState.textContent = model.phase === PHASES.RESPONDER_ARRIVED ? "MED-01 on scene" : navigating ? "MED-01 dispatched" : "MED-01 standby";
-  elements.arrivalSummary.hidden = model.phase !== PHASES.RESPONDER_ARRIVED;
+  elements.unitState.textContent = activeUnit ? `${activeUnit.id} ${activeUnit.status.replaceAll("_", " ").toLowerCase()}` : model.phase === PHASES.RESPONDER_ARRIVED ? "MED-01 on scene" : navigating ? "MED-01 dispatched" : "MED-01 / MED-02 available";
+  elements.arrivalSummary.hidden = activeUnit ? activeUnit.status !== "ON_SCENE" : model.phase !== PHASES.RESPONDER_ARRIVED;
   const routeRemaining = model.route ? model.route.totalDistance - model.routeDistance : 0;
   elements.roadBlock.disabled = model.phase !== PHASES.NAVIGATING || model.routeChanges > 0 || routeRemaining < 70;
+  elements.simulateSecond.hidden = incidentManager.pendingReviews().length === 0;
+  elements.reset.textContent = "Reset All";
 }
 
 function tick(delta, now) {
@@ -306,6 +368,10 @@ function tick(delta, now) {
     elements.sceneLoading.classList.add("is-hidden");
   }
 
+  const arrivals = unitManager.update(delta);
+  syncActiveUnit();
+  arrivals.forEach(handleManagedArrival);
+
   if (model.phase === PHASES.NORMAL) updateNormalTraffic(delta);
   else if (model.phase === PHASES.APPROACHING) updateApproach();
   else if (model.phase === PHASES.IMPACT) {
@@ -316,6 +382,7 @@ function tick(delta, now) {
   else if (model.phase === PHASES.AUDIO_DETECTED) updateAudioStage();
   else if (model.phase === PHASES.FUSION_VERIFYING) updateFusionStage();
   else if (model.phase === PHASES.SENSOR_MISMATCH && model.phaseElapsed >= motionTime(0.8)) setPhase(PHASES.FALSE_ALARM);
+  else if ([PHASES.PEDESTRIAN_APPROACH, PHASES.PEDESTRIAN_CONTACT, PHASES.SUSPECT_FLEEING, PHASES.VEHICLE_TRACKING].includes(model.phase)) updatePedestrianSequence();
   else if ([PHASES.CRITICAL_CONFIRMED, PHASES.ROUTE_CALCULATING, PHASES.NAVIGATING, PHASES.REROUTING, PHASES.RESPONDER_ARRIVED].includes(model.phase)) setCrashedVehiclePose();
 
   if (model.activeScenario !== "confirmed" && [PHASES.VISION_DETECTED, PHASES.AUDIO_DETECTED, PHASES.FUSION_VERIFYING, PHASES.SENSOR_MISMATCH, PHASES.FALSE_ALARM, PHASES.AWAITING_HUMAN_REVIEW].includes(model.phase)) updateFalseAlarmTraffic(delta);
@@ -331,11 +398,23 @@ function tick(delta, now) {
     drawNavigationMap();
     model.lastNavigationDraw = now;
   }
+  if (now - model.lastOperationsRender > 500) {
+    renderReviewQueue();
+    renderIncidentTaskbar();
+    renderCctvWorkspace();
+    model.lastOperationsRender = now;
+  }
   elements.vehicleSpeed.textContent = `${Math.max(0, Math.round(model.vehicleSpeed))} km/h`;
   updateMapPulse();
 }
 
 function updateNormalTraffic(delta) {
+  if (unitManager.list().some((unit) => unit.status === "EN_ROUTE")) {
+    model.carA = { x: -12, z: -1.2, rotation: 0 };
+    model.carB = { x: 1.2, z: 12, rotation: -Math.PI / 2 };
+    model.vehicleSpeed = 0;
+    return;
+  }
   model.normalCycle = (model.normalCycle + delta * 0.08) % 1;
   model.carA = { x: -25 + model.normalCycle * 12, z: -1.2, rotation: 0 };
   model.carB = { x: 1.2, z: 25 - model.normalCycle * 12, rotation: -Math.PI / 2 };
@@ -426,6 +505,10 @@ function startSelectedScenario() {
   if (model.phase !== PHASES.NORMAL) return;
   model.runToken += 1;
   model.activeScenario = model.selectedScenario;
+  if (["pedestrian", "concurrent"].includes(model.activeScenario)) {
+    startPedestrianScenario(model.activeScenario === "concurrent");
+    return;
+  }
   model.approachStartA = model.carA.x;
   model.approachStartB = model.carB.z;
   model.currentIncident = null;
@@ -440,6 +523,83 @@ function startSelectedScenario() {
   elements.etaLabel.textContent = "--:--";
   if (model.activeScenario === "loud_noise") setPhase(PHASES.SUSPECTED_EVENT);
   else setPhase(PHASES.APPROACHING);
+}
+
+function startPedestrianScenario(concurrent = false) {
+  model.concurrentMode = concurrent;
+  model.activeScenario = "pedestrian";
+  model.eventPosition = { x: 0, z: -8 };
+  model.pedestrian = { visible: true, x: -5.2, z: -8, rotationZ: 0, stationary: false };
+  model.suspectTrackingActive = false;
+  model.secondCameraTracking = false;
+  model.carA = { x: -17, z: 1.2, rotation: 0 };
+  model.carB = { x: 1.2, z: -23, rotation: -Math.PI / 2 };
+  model.impactIso = null;
+  const detectedAt = new Date().toISOString();
+  const incident = incidentManager.create({
+    type: "suspected-pedestrian-hit-and-run",
+    title: "Suspected Pedestrian Hit-and-Run",
+    state: "SENSOR_FUSION_ANALYSIS",
+    severity: "critical",
+    vulnerableRoadUser: true,
+    cameraIds: ["CCTV #04", "CCTV #05"],
+    location: "Jalan Awang Ramli Amit - Pedestrian Crossing 4",
+    coordinates: { latitude: 2.2911, longitude: 111.8294 },
+    position: { x: 0, z: -8, mapX: 650, mapY: 405 },
+    detectedAt,
+    confidence: { vision: 0.962, audio: 0.968, fusion: 0.954 },
+    evidence: { pedestrianId: "PEDESTRIAN-02", vehicleId: "VEHICLE-07", plate: "QAB 4721", plateConfidence: 0.946, vehicleDescription: "Silver compact sedan", direction: "Northbound", lastSeen: "CCTV #05", vehicleStatus: "Leaving incident area", classification: "Suspected pedestrian collision with vehicle departure" }
+  });
+  incidentManager.addTimeline(incident.id, "Pedestrian enters crossing", detectedAt);
+  model.selectedIncidentId = incident.id;
+  model.currentIncident = incidentToModalRecord(incident);
+  syncOperationsState();
+  setPhase(PHASES.PEDESTRIAN_APPROACH);
+}
+
+function updatePedestrianSequence() {
+  const incident = incidentManager.get(model.selectedIncidentId);
+  if (!incident) return;
+  if (model.phase === PHASES.PEDESTRIAN_APPROACH) {
+    const progress = clamp01(model.phaseElapsed / motionTime(2.4));
+    model.pedestrian.x = lerp(-5.2, 0, easeInOut(progress));
+    model.carB.z = lerp(-23, -8, easeInOut(progress));
+    model.vehicleSpeed = 96;
+    if (progress >= 1) {
+      model.impactIso = new Date().toISOString();
+      incidentManager.addTimeline(incident.id, "Vehicle enters conflict zone", offsetIso(model.impactIso, -0.3));
+      incidentManager.addTimeline(incident.id, "Visual contact suspected", model.impactIso);
+      setPhase(PHASES.PEDESTRIAN_CONTACT);
+    }
+  } else if (model.phase === PHASES.PEDESTRIAN_CONTACT) {
+    model.pedestrian = { visible: true, x: 0, z: -8, rotationZ: Math.PI / 2, stationary: true };
+    model.carB.z = -7.5;
+    model.vehicleSpeed = 28;
+    if (model.phaseElapsed >= motionTime(0.55)) {
+      incidentManager.addTimeline(incident.id, "Acoustic event detected", offsetIso(model.impactIso, 0.1));
+      incidentManager.addTimeline(incident.id, "Person remains stationary", offsetIso(model.impactIso, 0.9));
+      setPhase(PHASES.SUSPECT_FLEEING);
+    }
+  } else if (model.phase === PHASES.SUSPECT_FLEEING) {
+    const progress = clamp01(model.phaseElapsed / motionTime(1.8));
+    model.carB.z = lerp(-7.5, 15, easeInOut(progress));
+    model.vehicleSpeed = 42 + progress * 46;
+    model.suspectTrackingActive = true;
+    if (progress >= 1) {
+      incidentManager.addTimeline(incident.id, "Vehicle leaves scene", offsetIso(model.impactIso, 1.5));
+      setPhase(PHASES.VEHICLE_TRACKING);
+    }
+  } else if (model.phase === PHASES.VEHICLE_TRACKING) {
+    const progress = clamp01(model.phaseElapsed / motionTime(1.6));
+    model.carB.z = lerp(15, 27, progress);
+    model.vehicleSpeed = 82;
+    model.suspectTrackingActive = true;
+    model.secondCameraTracking = progress > 0.45;
+    if (progress >= 1) {
+      incidentManager.addTimeline(incident.id, "Vehicle detected by CCTV #05", offsetIso(model.impactIso, 6.2));
+      setPhase(PHASES.HUMAN_REVIEW_REQUIRED);
+    }
+  }
 }
 
 function sensorEventsMatch() {
@@ -492,7 +652,7 @@ function openEvidenceModal(mode) {
   elements.modal.classList.toggle("is-investigation", mode !== "critical");
   elements.modal.setAttribute("aria-hidden", "false");
   configureEvidenceModal();
-  requestAnimationFrame(() => elements.dispatch.focus());
+  requestAnimationFrame(() => (mode === "pedestrian" ? elements.confirmPedestrian : elements.dispatch).focus());
 }
 
 function configureEvidenceModal() {
@@ -507,8 +667,23 @@ function configureEvidenceModal() {
   elements.visionImpactTime.textContent = impactTime;
   elements.audioImpactTime.textContent = impactTime;
   elements.cctvDetectionBox.hidden = false;
+  elements.pedestrianDetectionBox.hidden = true;
+  elements.pedestrianFacts.forEach((fact) => { fact.hidden = true; });
+  elements.timelinePanel.hidden = true;
+  elements.notesField.hidden = true;
+  elements.pedestrianActions.hidden = true;
+  elements.dispatch.hidden = false;
+  elements.falseAlarm.hidden = false;
+  elements.minimiseReviewIcon.hidden = model.modalMode !== "pedestrian";
+  elements.closeReviewIcon.hidden = model.modalMode !== "pedestrian";
+  elements.emergencySubtitle.textContent = "";
   elements.dispatch.disabled = false;
   elements.falseAlarm.disabled = false;
+
+  if (model.modalMode === "pedestrian") {
+    configurePedestrianEvidence();
+    return;
+  }
 
   if (model.modalMode === "critical") {
     elements.emergencyTitle.textContent = "Status: critical - multi-sensor confirmation";
@@ -548,6 +723,71 @@ function configureEvidenceModal() {
   }
 }
 
+function configurePedestrianEvidence() {
+  const incident = incidentManager.get(model.selectedIncidentId);
+  if (!incident) return;
+  const evidence = incident.evidence;
+  const impact = incident.timeline.find((event) => event.label === "Visual contact suspected")?.at || incident.detectedAt;
+  elements.emergencyTitle.textContent = "PRIORITY HUMAN REVIEW";
+  elements.emergencySubtitle.textContent = "Suspected Pedestrian Hit-and-Run";
+  elements.modalIncidentId.textContent = incident.id;
+  elements.modalCoordinates.textContent = `${incident.coordinates.latitude.toFixed(3)}, ${incident.coordinates.longitude.toFixed(3)}`;
+  elements.modalLocation.textContent = incident.location;
+  elements.detectionTime.textContent = formatTime(incident.detectedAt);
+  elements.cctvTime.textContent = formatTime(impact);
+  elements.visionImpactTime.textContent = formatTime(impact);
+  elements.audioImpactTime.textContent = `${formatTime(offsetIso(impact, .1))} (+0.1 s)`;
+  elements.correlationBadge.textContent = "AWAITING HUMAN DECISION";
+  elements.visionBadge.textContent = "AI TRACKING";
+  elements.audioBadge.textContent = "AUDIO CORRELATED";
+  elements.cctvObjectLabel.textContent = evidence.vehicleId;
+  elements.pedestrianDetectionBox.hidden = false;
+  elements.visionObjectIds.textContent = `${evidence.pedestrianId} / ${evidence.vehicleId}`;
+  elements.visionOverlay.innerHTML = "Person-Vehicle Contact Suspected: <strong>96 km/h</strong>";
+  elements.visionConfidence.textContent = percent(incident.confidence.vision);
+  elements.modalVisionConfidence.textContent = percent(incident.confidence.vision);
+  elements.audioConfidence.textContent = percent(incident.confidence.audio);
+  elements.modalAudioConfidence.textContent = percent(incident.confidence.audio);
+  elements.audioMatchLabel.textContent = `${percent(incident.confidence.audio)} Match`;
+  elements.peakAmplitude.textContent = "121 dB";
+  elements.fusionConfidence.textContent = percent(incident.confidence.fusion);
+  elements.modalClassification.textContent = evidence.classification;
+  elements.modalRecommendation.textContent = "Medical Tier 1 - dispatcher decision";
+  elements.modalDispatchStatus.textContent = incident.dispatchStatus;
+  elements.emergencyNote.textContent = "AI-generated operational assessment. Human verification required. Suspect tracking is for police coordination; medical responders are routed to the pedestrian.";
+  elements.pedestrianFacts.forEach((fact) => { fact.hidden = false; });
+  elements.modalTrackingIds.textContent = `${evidence.pedestrianId} / ${evidence.vehicleId}`;
+  elements.modalPlate.textContent = `${evidence.plate} - ${percent(evidence.plateConfidence)}`;
+  elements.modalLastKnown.textContent = `${evidence.direction} - ${evidence.lastSeen}`;
+  elements.modalUnits.textContent = unitManager.list().map((unit) => `${unit.id}: ${unit.status.replaceAll("_", " ")}`).join(" / ");
+  elements.timeline.innerHTML = "";
+  incident.timeline.forEach((event) => { const item = document.createElement("li"); item.textContent = `${formatTimelineTime(event.at)} - ${event.label}`; elements.timeline.appendChild(item); });
+  elements.timelinePanel.hidden = false;
+  elements.notesField.hidden = false;
+  elements.notes.value = incident.notes || "";
+  elements.pedestrianActions.hidden = false;
+  elements.dispatch.hidden = true;
+  elements.falseAlarm.hidden = true;
+  elements.dispatchPending.disabled = Boolean(incident.assignedUnit);
+  elements.dispatchPending.textContent = incident.assignedUnit ? `${incident.assignedUnit} dispatched - review pending` : "Dispatch Medical - Keep Review Pending";
+  elements.policeCoordination.disabled = Boolean(incident.policeUnit);
+  elements.policeCoordination.textContent = incident.policeUnit ? `${incident.policeUnit} coordination requested` : "Request Police Coordination";
+}
+
+function openPedestrianReview(id) {
+  const incident = incidentManager.reopen(id);
+  if (!incident) return;
+  elements.reviewQueue.classList.remove("is-open");
+  elements.toggleReviewQueue.setAttribute("aria-expanded", "false");
+  model.selectedIncidentId = id;
+  model.currentIncident = incidentToModalRecord(incident);
+  model.activeScenario = "pedestrian";
+  model.impactIso = incident.timeline.find((event) => event.label === "Visual contact suspected")?.at || incident.detectedAt;
+  syncOperationsState();
+  openEvidenceModal("pedestrian");
+  requestAnimationFrame(() => { const dialog = elements.modal.querySelector(".emergency-dialog"); if (dialog) dialog.scrollTop = incident.reviewScrollTop || 0; });
+}
+
 function configureMismatchEvidence(scenario, impactTime) {
   const sudden = scenario === "sudden_stop";
   elements.emergencyTitle.textContent = "Status: unverified - sensor mismatch";
@@ -576,9 +816,102 @@ function configureMismatchEvidence(scenario, impactTime) {
 
 function closeEvidenceModal() {
   model.modalOpen = false;
+  elements.unresolvedConfirm.hidden = true;
   elements.body.classList.remove("modal-open");
   elements.modal.classList.remove("is-open", "is-investigation");
   elements.modal.setAttribute("aria-hidden", "true");
+}
+
+function minimiseCurrentReview() {
+  const incident = incidentManager.get(model.selectedIncidentId);
+  if (!incident) return;
+  const dialog = elements.modal.querySelector(".emergency-dialog");
+  incidentManager.minimise(incident.id, dialog?.scrollTop || 0);
+  closeEvidenceModal();
+  model.phase = PHASES.NORMAL;
+  model.phaseElapsed = 0;
+  model.cctvWorkspaceOpen = true;
+  elements.body.dataset.simulationState = PHASES.NORMAL;
+  showToast(`Incident ${incident.id} minimised - awaiting your decision`);
+  syncOperationsState();
+  updatePhaseUi();
+  if (model.concurrentMode && incidentManager.list().length === 1) {
+    simulateSecondIncident();
+    simulateConcurrentFalseAlarm();
+  }
+}
+
+function requestReviewExit() {
+  model.confirmationAction = "minimise";
+  elements.unresolvedTitle.textContent = "This incident is still pending. Minimise it and continue CCTV monitoring?";
+  elements.confirmMinimise.textContent = "Minimise and Continue";
+  elements.unresolvedConfirm.hidden = false;
+  elements.confirmMinimise.focus();
+}
+
+function requestPedestrianFalseAlarm() {
+  model.confirmationAction = "false-alarm";
+  elements.unresolvedTitle.textContent = "This event involves a potentially vulnerable road user. Confirm that no emergency response is required.";
+  elements.confirmMinimise.textContent = "Confirm False Alarm";
+  elements.unresolvedConfirm.hidden = false;
+  elements.confirmMinimise.focus();
+}
+
+function completePedestrianFalseAlarm() {
+  const incident = incidentManager.get(model.selectedIncidentId);
+  if (!incident) return;
+  const assigned = unitManager.get(incident.assignedUnit);
+  if (assigned?.status === "RESERVED") unitManager.releaseIncident(incident.id);
+  incidentManager.update(incident.id, { state: "FALSE_ALARM", decision: "Cleared by dispatcher", finalClassification: "False alarm", dispatchStatus: assigned?.status === "EN_ROUTE" ? "MEDICAL RESPONSE CONTINUES - dispatcher follow-up required" : "NOT DISPATCHED" });
+  addManagedHistory(incident.id);
+  closeEvidenceModal();
+  syncOperationsState();
+  showToast("FALSE ALARM - CLEARED BY DISPATCHER");
+  setPhase(PHASES.CLEARED);
+}
+
+function dispatchPedestrian(keepPending) {
+  const incident = incidentManager.get(model.selectedIncidentId);
+  if (!incident) return null;
+  let unit = incident.assignedUnit ? unitManager.get(incident.assignedUnit) : unitManager.assignMedical(incident.id, model.blockedSegments);
+  if (!unit) {
+    incidentManager.update(incident.id, { dispatchStatus: "NO IMMEDIATE MEDICAL UNIT AVAILABLE", evidence: { dispatchQueued: true } });
+    configurePedestrianEvidence();
+    showToast("NO IMMEDIATE MEDICAL UNIT AVAILABLE - incident added to dispatch queue");
+    return null;
+  }
+  unitManager.dispatch(unit.id);
+  incidentManager.update(incident.id, { state: keepPending ? "MEDICAL_DISPATCHED_REVIEW_PENDING" : "CONFIRMED_INCIDENT", decision: keepPending ? null : "Incident confirmed by dispatcher", finalClassification: keepPending ? null : "Suspected pedestrian collision", assignedUnit: unit.id, dispatchAt: new Date().toISOString(), dispatchStatus: keepPending ? "MEDICAL DISPATCHED - CLASSIFICATION PENDING" : `${unit.id} DISPATCHED` });
+  model.activeNavigationUnit = unit.id;
+  model.navigationMinimized = keepPending;
+  model.route = unit.route;
+  model.routePoints = unit.route.points;
+  model.routeSegments = unit.route.segments;
+  model.routeVersion += 1;
+  model.routeStartedAt = new Date(unit.startedAt);
+  syncActiveUnit(true);
+  syncOperationsState();
+  if (keepPending) {
+    configurePedestrianEvidence();
+    showToast(`${unit.id} dispatched - human review remains pending`);
+  } else {
+    addManagedHistory(incident.id);
+    closeEvidenceModal();
+    model.phase = unit.status === "ON_SCENE" ? PHASES.RESPONDER_ARRIVED : PHASES.NAVIGATING;
+    model.navigationMinimized = false;
+    updatePhaseUi();
+    showToast("INCIDENT CONFIRMED");
+  }
+  return unit;
+}
+
+function requestPedestrianPolice() {
+  const incident = incidentManager.get(model.selectedIncidentId);
+  if (!incident) return;
+  const unit = incident.policeUnit ? unitManager.get(incident.policeUnit) : unitManager.assignPolice(incident.id);
+  incidentManager.update(incident.id, { policeUnit: unit?.id || null, evidence: { policePackage: "Plate candidate, vehicle trail and CCTV #05 last-known position" } });
+  syncOperationsState();
+  configurePedestrianEvidence();
 }
 
 async function handlePrimaryModalAction() {
@@ -652,6 +985,22 @@ async function confirmIncidentFromReview() {
 
 async function dispatchAmbulance() {
   if (!model.currentIncident || model.phase !== PHASES.CRITICAL_CONFIRMED) return;
+  const managed = incidentManager.get(model.currentIncident.id);
+  if (managed) {
+    const unit = unitManager.assignMedical(managed.id, model.blockedSegments);
+    if (!unit) { showToast("NO IMMEDIATE MEDICAL UNIT AVAILABLE"); return; }
+    unitManager.dispatch(unit.id);
+    incidentManager.update(managed.id, { assignedUnit: unit.id, state: "CONFIRMED_INCIDENT", decision: "Confirmed multi-sensor collision", dispatchAt: new Date().toISOString(), dispatchStatus: `${unit.id} DISPATCHED` });
+    model.activeNavigationUnit = unit.id;
+    model.navigationMinimized = false;
+    closeEvidenceModal();
+    syncActiveUnit(true);
+    syncOperationsState();
+    model.phase = PHASES.NAVIGATING;
+    updatePhaseUi();
+    addManagedHistory(managed.id);
+    return;
+  }
   elements.dispatch.disabled = true;
   elements.dispatch.textContent = "Dispatching MED-01...";
   await persistDispatchAndNavigate(false);
@@ -690,6 +1039,7 @@ function installPendingRoute() {
   model.routePoints = model.route.points;
   model.routeSegments = model.route.segments;
   model.routeDistance = 0;
+  model.responderSpeedMps = 0;
   model.routeVersion += 1;
   const pose = poseAlongRoute(model.route, 0);
   model.ambulance = { x: pose.x, z: pose.z, rotation: pose.rotation };
@@ -699,14 +1049,27 @@ function installPendingRoute() {
 }
 
 function updateNavigation(delta) {
-  model.routeDistance = Math.min(model.route.totalDistance, model.routeDistance + navigationConstants.emergencySpeedMps * delta);
+  if (model.activeNavigationUnit) return;
+  const currentPose = poseAlongRoute(model.route, model.routeDistance);
+  const currentSegment = model.route.segments[currentPose.segmentIndex];
+  const nextSegment = model.route.segments[currentPose.segmentIndex + 1];
+  const distanceToTurn = Math.max(0, (currentSegment?.endDistance || model.route.totalDistance) - model.routeDistance);
+  const remainingBeforeMove = Math.max(0, model.route.totalDistance - model.routeDistance);
+  const targetSpeed = remainingBeforeMove < 55 ? 7.5 : nextSegment && distanceToTurn < 70 ? 14.5 : 30.5;
+  const rate = targetSpeed > model.responderSpeedMps ? 8 : 13;
+  const speedDelta = Math.min(Math.abs(targetSpeed - model.responderSpeedMps), rate * delta);
+  model.responderSpeedMps += Math.sign(targetSpeed - model.responderSpeedMps) * speedDelta;
+  model.routeDistance = Math.min(model.route.totalDistance, model.routeDistance + model.responderSpeedMps * delta);
   const pose = poseAlongRoute(model.route, model.routeDistance);
   model.ambulance = { x: pose.x, z: pose.z, rotation: pose.rotation };
   const remaining = Math.max(0, model.route.totalDistance - model.routeDistance);
-  model.etaSeconds = Math.ceil(remaining / navigationConstants.emergencySpeedMps);
+  const etaSpeed = Math.max(14.5, model.responderSpeedMps * 0.35 + targetSpeed * 0.65);
+  model.etaSeconds = Math.ceil(remaining / etaSpeed);
   model.navigationInstruction = navigationInstruction(model.route, pose, remaining);
-  model.vehicleSpeed = remaining < 55 ? 24 : 72;
+  model.vehicleSpeed = model.responderSpeedMps * 3.6;
+  elements.navSpeed.textContent = `${Math.round(model.vehicleSpeed)} km/h`;
   updateNavigationHud(remaining);
+  renderResponderCard(null);
   if (model.routeDistance >= model.route.totalDistance) setPhase(PHASES.RESPONDER_ARRIVED);
 }
 
@@ -726,6 +1089,18 @@ function updateNavigationHud(remaining) {
 
 function simulateRoadBlock() {
   if (model.phase !== PHASES.NAVIGATING || elements.roadBlock.disabled) return;
+  const managed = unitManager.get(model.activeNavigationUnit);
+  if (managed?.route) {
+    const pose = poseAlongRoute(managed.route, managed.routeDistance);
+    const upcoming = managed.route.segments[Math.min(managed.route.segments.length - 1, pose.segmentIndex + 1)];
+    model.blockedSegments.add(segmentKey(upcoming.from, upcoming.to));
+    model.blockedRoutePoints = [[ROAD_NODES[upcoming.from], ROAD_NODES[upcoming.to]]];
+    unitManager.reroute(managed.id, upcoming.from, model.blockedSegments);
+    model.routeTone = "alternative";
+    syncActiveUnit(true);
+    elements.routeStatus.textContent = "Alternative route active";
+    return;
+  }
   const pose = poseAlongRoute(model.route, model.routeDistance);
   const upcoming = model.route.segments[Math.min(model.route.segments.length - 1, pose.segmentIndex + 1)];
   const blockedKey = segmentKey(upcoming.from, upcoming.to);
@@ -745,11 +1120,13 @@ function simulateRoadBlock() {
 
 function completeArrival() {
   model.arrivalIso = new Date().toISOString();
+  model.responderSpeedMps = 0;
   model.vehicleSpeed = 0;
   model.etaSeconds = 0;
   elements.arrivalTime.textContent = formatTime(model.arrivalIso);
   elements.etaLabel.textContent = "ARRIVED";
   elements.navEta.textContent = "00:00";
+  elements.navSpeed.textContent = "0 km/h";
   const responseSeconds = Math.max(0, Math.round((new Date(model.arrivalIso) - model.routeStartedAt) / 1000));
   const distance = Math.round(model.completedDistance + (model.route?.totalDistance || 0));
   elements.responseTime.textContent = formatDuration(responseSeconds);
@@ -868,15 +1245,15 @@ function upsertHistory(patch) {
 }
 
 function renderHistory() {
-  elements.reviewCount.textContent = String(model.reviewQueue.length);
+  elements.reviewCount.textContent = String(incidentManager.pendingReviews().length);
   elements.historyBody.innerHTML = "";
   if (!model.history.length) {
-    elements.historyBody.innerHTML = '<tr class="empty-history"><td colspan="9">No completed demonstrations yet</td></tr>';
+    elements.historyBody.innerHTML = '<tr class="empty-history"><td colspan="11">No completed demonstrations yet</td></tr>';
     return;
   }
   model.history.forEach((entry) => {
     const row = document.createElement("tr");
-    [entry.id, entry.time, entry.trigger, entry.vision, entry.audio, entry.fusion, entry.decision, entry.dispatch, entry.response].forEach((value) => {
+    [entry.id, entry.time, entry.location || "--", entry.trigger, entry.vision, entry.audio, entry.fusion, entry.decision, entry.dispatch, entry.response, entry.notes || "--"].forEach((value) => {
       const cell = document.createElement("td");
       cell.textContent = value;
       row.appendChild(cell);
@@ -885,8 +1262,219 @@ function renderHistory() {
   });
 }
 
+const CCTV_FEEDS = [
+  ["CCTV #01", "Main Highway"], ["CCTV #02", "School Zone"], ["CCTV #03", "Commercial District"],
+  ["CCTV #04", "Incident Crossing"], ["CCTV #05", "Northbound Junction"], ["CCTV #06", "Hospital Route"]
+];
+
+function syncOperationsState() {
+  model.incidents = incidentManager.list();
+  model.units = unitManager.list();
+  model.selectedIncidentId = incidentManager.selectedId || model.selectedIncidentId;
+  renderReviewQueue();
+  renderIncidentTaskbar();
+  renderCctvWorkspace();
+  updateMapIncident();
+}
+
+function syncActiveUnit(forceRoute = false) {
+  model.units = unitManager.list();
+  const unit = unitManager.get(model.activeNavigationUnit);
+  if (!unit?.route) { renderResponderCard(unit); return; }
+  if (forceRoute || model.route !== unit.route) {
+    model.route = unit.route;
+    model.routePoints = unit.route.points;
+    model.routeSegments = unit.route.segments;
+    model.routeVersion += 1;
+  }
+  model.routeDistance = unit.routeDistance;
+  model.routeChanges = unit.routeChanges;
+  model.completedDistance = unit.completedDistance;
+  model.ambulance = { ...unit.position };
+  model.etaSeconds = unit.etaSeconds;
+  model.navigationInstruction = unit.instruction || model.navigationInstruction;
+  model.vehicleSpeed = unit.speedMps * 3.6;
+  elements.navigationUnitId.textContent = unit.id;
+  elements.navIncident.textContent = unit.assignedIncident || "--";
+  elements.navSpeed.textContent = `${Math.round(unit.speedMps * 3.6)} km/h`;
+  const remaining = Math.max(0, unit.route.totalDistance - unit.routeDistance);
+  if (unit.instruction) updateNavigationHud(remaining);
+  renderResponderCard(unit);
+}
+
+function handleManagedArrival(unit) {
+  const incident = incidentManager.get(unit.assignedIncident);
+  if (incident) {
+    incidentManager.update(incident.id, { state: incident.decision ? "CONFIRMED_INCIDENT" : "MEDICAL_DISPATCHED_REVIEW_PENDING", dispatchStatus: `${unit.id} ON SCENE`, arrivalAt: unit.arrivedAt });
+    if (incident.decision) addManagedHistory(incident.id);
+  }
+  if (unit.id === model.activeNavigationUnit) {
+    elements.arrivalTime.textContent = formatTime(unit.arrivedAt);
+    elements.etaLabel.textContent = "ARRIVED";
+    elements.navSpeed.textContent = "0 km/h";
+  }
+  syncOperationsState();
+}
+
+function renderResponderCard(unit = unitManager.get(model.activeNavigationUnit)) {
+  const legacyNavigation = !unit && model.currentIncident && NAVIGATION_PHASES.has(model.phase);
+  const visible = model.navigationMinimized && (legacyNavigation || Boolean(unit && ["RESERVED", "EN_ROUTE", "ON_SCENE"].includes(unit.status)));
+  elements.responderCard.hidden = !visible;
+  if (!visible) return;
+  if (legacyNavigation) {
+    const remaining = Math.max(0, (model.route?.totalDistance || 0) - model.routeDistance);
+    elements.responderCardUnit.textContent = "MED-01";
+    elements.responderCardCopy.textContent = `MED-01 -> ${model.currentIncident.id} - ETA ${formatDuration(model.etaSeconds)} - ${model.phase.replaceAll("_", " ")} - ${Math.round(remaining)} m`;
+    return;
+  }
+  const remaining = Math.max(0, (unit.route?.totalDistance || 0) - unit.routeDistance);
+  elements.responderCardUnit.textContent = unit.id;
+  elements.responderCardCopy.textContent = `${unit.id} -> ${unit.assignedIncident} - ETA ${formatDuration(unit.etaSeconds)} - ${unit.status.replaceAll("_", " ")} - ${Math.round(remaining)} m`;
+}
+
+function renderReviewQueue() {
+  const pending = incidentManager.pendingReviews();
+  elements.queueCount.textContent = String(pending.length);
+  elements.topReviewCount.textContent = String(pending.length);
+  elements.pendingReviewBadge.classList.toggle("has-pending", pending.length > 0);
+  elements.reviewQueueList.innerHTML = pending.length ? "" : "<p>No incidents awaiting review</p>";
+  pending.forEach((incident) => {
+    const card = document.createElement("article");
+    card.className = "review-item";
+    card.innerHTML = `<header><strong>${escapeHtml(incident.id)}</strong><span>${escapeHtml(incident.severity)}</span></header><p>${escapeHtml(incident.title)}<br>${escapeHtml(incident.location)}<br>${formatTime(incident.detectedAt)}</p><dl><div><dt>Waiting</dt><dd>${formatWaiting(incident.detectedAt)}</dd></div><div><dt>Fusion</dt><dd>${percent(incident.confidence.fusion)}</dd></div><div><dt>Units</dt><dd>${escapeHtml(incident.assignedUnit || "None")} / ${escapeHtml(incident.policeUnit || "No police")}</dd></div></dl><button type="button" data-open-incident="${escapeHtml(incident.id)}">Reopen Review</button>`;
+    elements.reviewQueueList.appendChild(card);
+  });
+}
+
+function renderIncidentTaskbar() {
+  elements.incidentTaskbar.innerHTML = "";
+  incidentManager.pendingReviews().filter((incident) => incident.minimized).forEach((incident) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "incident-chip";
+    button.dataset.openIncident = incident.id;
+    button.innerHTML = `<strong>${escapeHtml(incident.id)} - Pedestrian Incident - Critical</strong><span>Pending ${formatWaiting(incident.detectedAt)} - ${escapeHtml(incident.dispatchStatus)} - REOPEN</span>`;
+    elements.incidentTaskbar.appendChild(button);
+  });
+}
+
+function renderCctvWorkspace() {
+  elements.cctvWorkspace.hidden = !model.cctvWorkspaceOpen;
+  if (!model.cctvWorkspaceOpen) return;
+  elements.cctvFeedList.innerHTML = "";
+  elements.cctvMonitorGrid.innerHTML = "";
+  elements.cctvMonitorGrid.classList.toggle("is-grid", model.cctvGridMode);
+  CCTV_FEEDS.forEach(([id, location]) => {
+    const related = incidentManager.list().filter((incident) => incident.cameraIds?.includes(id) && !["FALSE_ALARM", "CLOSED"].includes(incident.state));
+    const status = related.some((incident) => incident.assignedUnit)
+      ? "UNIT ASSIGNED"
+      : related.some((incident) => incidentManager.pendingReviews().some((pending) => pending.id === incident.id))
+        ? "AWAITING REVIEW"
+        : related.length ? `${related.length} ACTIVE INCIDENT${related.length > 1 ? "S" : ""}` : "";
+    const feedButton = document.createElement("button");
+    feedButton.type = "button";
+    feedButton.className = "cctv-feed-button";
+    feedButton.dataset.feedId = id;
+    feedButton.setAttribute("aria-pressed", String(model.selectedCctvFeed === id));
+    feedButton.innerHTML = `<span><strong>${id}</strong><br>${location}</span>${status ? `<span class="camera-incident-badge">${status}</span>` : ""}`;
+    elements.cctvFeedList.appendChild(feedButton);
+    if (model.cctvGridMode || model.selectedCctvFeed === id) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "cctv-feed-card";
+      card.dataset.feedId = id;
+      card.innerHTML = `<span class="cctv-feed-visual"></span>${status ? `<span class="camera-incident-badge">${status}</span>` : ""}<span class="cctv-feed-meta"><b>${id} - LIVE</b><span>${location}</span></span>`;
+      elements.cctvMonitorGrid.appendChild(card);
+    }
+  });
+}
+
+function handleCctvSelection(event) {
+  const feed = event.target.closest("[data-feed-id]")?.dataset.feedId;
+  if (!feed) return;
+  model.selectedCctvFeed = feed;
+  model.cctvGridMode = false;
+  elements.cctvGridMode.setAttribute("aria-pressed", "false");
+  renderCctvWorkspace();
+  const pending = incidentManager.pendingReviews().find((incident) => incident.cameraIds?.includes(feed));
+  if (pending && event.target.closest(".cctv-feed-card")) openPedestrianReview(pending.id);
+}
+
+function simulateSecondIncident() {
+  const previousSelection = incidentManager.selectedId;
+  const incident = incidentManager.create({ type: "vehicle-collision", title: "Confirmed Vehicle Collision", state: "CONFIRMED_INCIDENT", severity: "high", cameraIds: ["CCTV #02"], location: "School Zone - Intersection 2", coordinates: { latitude: 2.2942, longitude: 111.8248 }, position: { x: -18, z: 16, mapX: 450, mapY: 250 }, confidence: { vision: .991, audio: .987, fusion: .989 }, evidence: { vehicleId: "VEH-318 / VEH-442" } });
+  model.pendingNewIncidentId = incident.id;
+  if (previousSelection) incidentManager.select(previousSelection);
+  elements.newIncidentAlert.hidden = false;
+  syncOperationsState();
+  showToast("New incident detected on CCTV #02");
+}
+
+function simulateConcurrentFalseAlarm() {
+  const previousSelection = incidentManager.selectedId;
+  const incident = incidentManager.create({
+    type: "sudden-stop-anomaly",
+    title: "Emergency Braking Anomaly",
+    state: "FALSE_ALARM",
+    severity: "low",
+    cameraIds: ["CCTV #03"],
+    location: "Commercial District - Junction 6",
+    coordinates: { latitude: 2.2879, longitude: 111.8352 },
+    position: { x: 20, z: -17, mapX: 705, mapY: 430 },
+    confidence: { vision: .944, audio: .082, fusion: .182 },
+    evidence: { reason: "No acoustic impact signature within the incident window" },
+    decision: "Automatically retained for dispatcher audit",
+    finalClassification: "Emergency braking - no collision",
+    dispatchStatus: "NOT DISPATCHED"
+  });
+  if (previousSelection) incidentManager.select(previousSelection);
+  addManagedHistory(incident.id);
+}
+
+function openManagedIncident(id) {
+  const incident = incidentManager.get(id);
+  if (!incident) return;
+  if (incident.type === "suspected-pedestrian-hit-and-run") return openPedestrianReview(id);
+  incidentManager.select(id);
+  model.selectedIncidentId = id;
+  model.currentIncident = incidentToModalRecord(incident);
+  model.activeScenario = "confirmed";
+  model.impactIso = incident.detectedAt;
+  model.phase = PHASES.CRITICAL_CONFIRMED;
+  openEvidenceModal("critical");
+}
+
+function addManagedHistory(id) {
+  const incident = incidentManager.get(id);
+  if (!incident) return;
+  const pendingSeconds = Math.round(((incident.dispatchAt ? new Date(incident.dispatchAt) : new Date()) - new Date(incident.detectedAt)) / 1000);
+  const reviewAudit = incident.wasMinimized ? `; minimised review; pending ${formatDuration(pendingSeconds)}` : "";
+  upsertHistory({
+    id,
+    time: formatTime(incident.detectedAt),
+    location: incident.location,
+    trigger: incident.title,
+    decision: `${incident.decision || incident.finalClassification || "Review pending"}${reviewAudit}`,
+    dispatch: `${incident.assignedUnit || "No unit"} after ${formatDuration(pendingSeconds)}`,
+    response: incident.arrivalAt ? `Arrived ${formatTime(incident.arrivalAt)}` : "--",
+    notes: incident.notes || "--",
+    fusion: percent(incident.confidence.fusion),
+    vision: percent(incident.confidence.vision),
+    audio: percent(incident.confidence.audio)
+  });
+}
+
+function showToast(message) {
+  elements.operationsToast.textContent = message;
+  elements.operationsToast.hidden = false;
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => { elements.operationsToast.hidden = true; }, 2800);
+}
+
 function resetSimulation() {
   model.runToken += 1;
+  incidentManager.resetAll();
+  unitManager.resetAll();
   model.phase = PHASES.NORMAL;
   model.phaseElapsed = 0;
   model.selectedScenario = "confirmed";
@@ -895,6 +1483,7 @@ function resetSimulation() {
   model.carA = { x: -23, z: -1.2, rotation: 0 };
   model.carB = { x: 1.2, z: 23, rotation: -Math.PI / 2 };
   model.vehicleSpeed = 48;
+  model.responderSpeedMps = 0;
   model.eventPosition = { x: 0, z: 0 };
   model.impactIso = null;
   model.visionDetectedAt = null;
@@ -917,6 +1506,17 @@ function resetSimulation() {
   model.etaSeconds = 0;
   model.cameraMode = "responder";
   model.arrivalIso = null;
+  model.incidents = [];
+  model.units = unitManager.list();
+  model.selectedIncidentId = null;
+  model.activeNavigationUnit = null;
+  model.navigationMinimized = false;
+  model.pedestrian = { visible: false, x: -5.2, z: -8, rotationZ: 0, stationary: false };
+  model.suspectTrackingActive = false;
+  model.secondCameraTracking = false;
+  model.cctvWorkspaceOpen = false;
+  model.selectedCctvFeed = "CCTV #04";
+  model.concurrentMode = false;
   closeEvidenceModal();
   elements.scenario.value = "confirmed";
   elements.simulateLabel.textContent = SCENARIOS.confirmed.button;
@@ -931,6 +1531,7 @@ function resetSimulation() {
   elements.collapseMap.textContent = "−";
   elements.cameraButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.cameraMode === "responder")));
   clearMapIncident();
+  syncOperationsState();
   renderStandbyTelemetry();
   elements.body.dataset.simulationState = PHASES.NORMAL;
   updatePhaseUi();
@@ -995,6 +1596,17 @@ function drawMapSensors() {
 
 function updateMapIncident() {
   clearMapIncident();
+  if (incidentManager.list().length) {
+    incidentManager.list().forEach((incident) => {
+      const { mapX = 600, mapY = 360 } = incident.position || {};
+      if (["AWAITING_HUMAN_DECISION", "REVIEW_MINIMISED", "MEDICAL_DISPATCHED_REVIEW_PENDING"].includes(incident.state)) elements.mapResultLayer.appendChild(svgEl("circle", { cx: mapX, cy: mapY, r: 52, class: "map-investigation-radius" }));
+      const markerClass = ["FALSE_ALARM", "CLOSED"].includes(incident.state) ? "map-event-cleared" : ["CONFIRMED_INCIDENT", "RESPONDER_EN_ROUTE", "RESPONDER_ARRIVED"].includes(incident.state) ? "map-event-red" : "map-event-amber";
+      const group = svgEl("g", { "data-incident-id": incident.id, tabindex: "0", role: "button", "aria-label": `Open ${incident.id}` });
+      group.appendChild(svgEl("circle", { cx: mapX, cy: mapY, r: 22, class: markerClass, "data-map-marker": "true" }));
+      elements.mapResultLayer.appendChild(group);
+    });
+    return;
+  }
   if ([PHASES.NORMAL, PHASES.APPROACHING, PHASES.IMPACT].includes(model.phase)) return;
   if (NAVIGATION_PHASES.has(model.phase)) elements.mapResultLayer.appendChild(svgEl("path", { d: "M160 590 C300 520 430 430 600 360", class: "map-route" }));
   const suspected = [PHASES.SUSPECTED_EVENT, PHASES.VISION_DETECTED, PHASES.AUDIO_DETECTED, PHASES.FUSION_VERIFYING, PHASES.SENSOR_MISMATCH, PHASES.FALSE_ALARM, PHASES.AWAITING_HUMAN_REVIEW].includes(model.phase);
@@ -1005,10 +1617,27 @@ function updateMapIncident() {
 }
 
 function updateMapPulse() {
-  const marker = elements.mapResultLayer.querySelector("[data-map-marker]");
-  if (!marker || marker.classList.contains("map-event-cleared")) return;
-  const base = marker.classList.contains("map-event-red") ? 23 : 20;
-  marker.setAttribute("r", String(base + Math.sin(model.elapsed * 6) * 4));
+  elements.mapResultLayer.querySelectorAll("[data-map-marker]").forEach((marker) => {
+    if (marker.classList.contains("map-event-cleared")) return;
+    const base = marker.classList.contains("map-event-red") ? 23 : 20;
+    marker.setAttribute("r", String(base + Math.sin(model.elapsed * 6) * 4));
+  });
+}
+
+function resetSelectedIncident() {
+  const incident = incidentManager.get(model.selectedIncidentId);
+  if (!incident) return resetSimulation();
+  unitManager.releaseIncident(incident.id);
+  incidentManager.remove(incident.id);
+  if (model.currentIncident?.id === incident.id) closeEvidenceModal();
+  const active = unitManager.get(model.activeNavigationUnit);
+  if (!active?.assignedIncident) model.activeNavigationUnit = unitManager.list().find((unit) => unit.status === "EN_ROUTE")?.id || null;
+  if (incident.vulnerableRoadUser) model.pedestrian.visible = false;
+  model.phase = PHASES.NORMAL;
+  model.currentIncident = null;
+  syncActiveUnit(true);
+  syncOperationsState();
+  updatePhaseUi();
 }
 
 function clearMapIncident() { elements.mapResultLayer.innerHTML = ""; }
@@ -1046,7 +1675,15 @@ function adoptExternalIncident(incident) {
 function bindControls() {
   elements.simulate.addEventListener("click", startSelectedScenario);
   elements.reset.addEventListener("click", resetSimulation);
-  elements.scenario.addEventListener("change", () => { model.selectedScenario = elements.scenario.value; elements.simulateLabel.textContent = SCENARIOS[model.selectedScenario].button; });
+  elements.resetSelected.addEventListener("click", resetSelectedIncident);
+  elements.simulateSecond.addEventListener("click", simulateSecondIncident);
+  elements.simulateSecondCctv.addEventListener("click", simulateSecondIncident);
+  elements.scenario.addEventListener("change", () => {
+    model.selectedScenario = elements.scenario.value;
+    elements.simulateLabel.textContent = SCENARIOS[model.selectedScenario].button;
+    const pedestrianPreview = ["pedestrian","concurrent"].includes(model.selectedScenario);
+    model.pedestrian = { visible: pedestrianPreview, x: -5.2, z: -8, rotationZ: 0, stationary: false };
+  });
   elements.noise.addEventListener("input", () => { elements.noiseReadout.textContent = `${elements.noise.value} dB`; });
   elements.energy.addEventListener("input", () => { elements.energyReadout.textContent = `${elements.energy.value} dB`; });
   elements.dispatch.addEventListener("click", handlePrimaryModalAction);
@@ -1054,6 +1691,33 @@ function bindControls() {
   elements.humanReview.addEventListener("click", escalateHumanReview);
   elements.roadBlock.addEventListener("click", simulateRoadBlock);
   elements.handover.addEventListener("click", handOverResponse);
+  elements.confirmPedestrian.addEventListener("click", () => dispatchPedestrian(false));
+  elements.dispatchPending.addEventListener("click", () => dispatchPedestrian(true));
+  elements.policeCoordination.addEventListener("click", requestPedestrianPolice);
+  elements.pedestrianFalseAlarm.addEventListener("click", requestPedestrianFalseAlarm);
+  elements.continuePedestrian.addEventListener("click", minimiseCurrentReview);
+  elements.minimiseReview.addEventListener("click", minimiseCurrentReview);
+  elements.minimiseReviewIcon.addEventListener("click", minimiseCurrentReview);
+  elements.closeReviewIcon.addEventListener("click", requestReviewExit);
+  elements.reviewQueueShortcut.addEventListener("click", () => { elements.reviewQueue.classList.add("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", "true"); });
+  elements.confirmMinimise.addEventListener("click", () => model.confirmationAction === "false-alarm" ? completePedestrianFalseAlarm() : minimiseCurrentReview());
+  elements.returnReview.addEventListener("click", () => { elements.unresolvedConfirm.hidden = true; elements.minimiseReview.focus(); });
+  elements.notes.addEventListener("input", () => { if (model.selectedIncidentId) incidentManager.update(model.selectedIncidentId, { notes: elements.notes.value }); });
+  elements.pendingReviewBadge.addEventListener("click", () => { elements.reviewQueue.classList.add("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", "true"); });
+  elements.toggleReviewQueue.addEventListener("click", () => { const open = elements.reviewQueue.classList.toggle("is-open"); elements.toggleReviewQueue.setAttribute("aria-expanded", String(open)); });
+  const openIncidentFromEvent = (event) => { const target = event.target.closest("[data-open-incident],[data-incident-id]"); const id = target?.dataset.openIncident || target?.dataset.incidentId; if (id) openManagedIncident(id); };
+  elements.reviewQueueList.addEventListener("click", openIncidentFromEvent);
+  elements.incidentTaskbar.addEventListener("click", openIncidentFromEvent);
+  elements.mapResultLayer.addEventListener("click", openIncidentFromEvent);
+  elements.cctvFeedList.addEventListener("click", handleCctvSelection);
+  elements.cctvMonitorGrid.addEventListener("click", handleCctvSelection);
+  elements.cctvGridMode.addEventListener("click", () => { model.cctvGridMode = !model.cctvGridMode; elements.cctvGridMode.setAttribute("aria-pressed", String(model.cctvGridMode)); renderCctvWorkspace(); });
+  elements.returnCity.addEventListener("click", () => { model.cctvWorkspaceOpen = false; renderCctvWorkspace(); });
+  elements.minimiseNavigation.addEventListener("click", () => { model.navigationMinimized = true; model.cctvWorkspaceOpen = true; model.cameraMode = "incident"; renderCctvWorkspace(); renderResponderCard(); updatePhaseUi(); });
+  elements.restoreNavigation.addEventListener("click", () => { model.navigationMinimized = false; model.cctvWorkspaceOpen = false; model.cameraMode = "responder"; renderCctvWorkspace(); renderResponderCard(); updatePhaseUi(); });
+  elements.openNewIncident.addEventListener("click", () => { elements.newIncidentAlert.hidden = true; openManagedIncident(model.pendingNewIncidentId); });
+  elements.keepCurrentReview.addEventListener("click", () => { elements.newIncidentAlert.hidden = true; });
+  elements.minimiseOpenNew.addEventListener("click", () => { const id = model.pendingNewIncidentId; elements.newIncidentAlert.hidden = true; if (model.modalMode === "pedestrian") minimiseCurrentReview(); openManagedIncident(id); });
   elements.clearHistory.addEventListener("click", () => { model.history = []; model.reviewQueue = []; renderHistory(); });
   elements.collapseMap.addEventListener("click", () => { const collapsed = elements.navigationMapPanel.classList.toggle("is-collapsed"); elements.collapseMap.textContent = collapsed ? "+" : "−"; });
   elements.cameraButtons.forEach((button) => button.addEventListener("click", () => {
@@ -1062,6 +1726,7 @@ function bindControls() {
   }));
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !model.modalOpen) return;
+    if (model.modalMode === "pedestrian") return requestReviewExit();
     if (model.modalMode === "review") return;
     if (model.modalMode === "critical") handleSecondaryModalAction();
     else finalizeFalseAlarm("Continue monitoring");
@@ -1072,6 +1737,7 @@ async function init() {
   bindControls();
   drawMapBase();
   renderHistory();
+  syncOperationsState();
   try {
     const [health, config] = await Promise.all([api("/api/health"), api("/api/config")]);
     sensors = config.sensors;
@@ -1081,7 +1747,7 @@ async function init() {
     setBackendStatus("online", "API connected");
     startEventStream();
     roadScene = createRoadScene({ container: elements.sceneContainer, evidenceCanvas: elements.cctvCanvas, getState: () => model, onFrame: tick });
-    window.__echoAlertDebug = { getState: () => ({ phase: model.phase, scenario: model.activeScenario, modalMode: model.modalMode, route: model.route?.nodeIds || [], routeDistance: model.routeDistance, routeChanges: model.routeChanges, renderFrames: model.renderFrames, incidentId: model.currentIncident?.id || null }), loopCount: 1 };
+    window.__echoAlertDebug = { getState: () => ({ phase: model.phase, scenario: model.activeScenario, modalMode: model.modalMode, route: model.route?.nodeIds || [], routeDistance: model.routeDistance, routeChanges: model.routeChanges, renderFrames: model.renderFrames, incidentId: model.currentIncident?.id || null, incidents: incidentManager.list(), units: unitManager.list(), selectedCctvFeed: model.selectedCctvFeed }), loopCount: 1 };
   } catch (error) {
     setBackendStatus("offline", "System unavailable");
     elements.sceneLoading.innerHTML = `<strong>3D simulation unavailable</strong><span>${escapeHtml(error.message)}</span>`;
@@ -1095,6 +1761,11 @@ function setBackendStatus(status, text) { elements.backendState.textContent = te
 function motionTime(seconds) { return model.reducedMotion ? Math.max(0.2, seconds * 0.42) : seconds; }
 function formatTime(value) { return value ? new Date(value).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }).toUpperCase() : "--:--:--"; }
 function formatDuration(seconds) { const value = Math.max(0, Math.ceil(seconds || 0)); return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`; }
+function formatWaiting(value) { return formatDuration((Date.now() - new Date(value).getTime()) / 1000); }
+function formatTimelineTime(value) { const date = new Date(value); return `${date.toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}.${String(date.getMilliseconds()).padStart(3, "0").slice(0, 1)}`; }
+function offsetIso(value, seconds) { return new Date(new Date(value).getTime() + seconds * 1000).toISOString(); }
+function percent(value) { return `${((Number(value) || 0) * 100).toFixed(1)}%`; }
+function incidentToModalRecord(incident) { return { id: incident.id, detectedAt: incident.detectedAt, latitude: incident.coordinates.latitude, longitude: incident.coordinates.longitude, confidence: incident.confidence.fusion, lockedCount: 2, telemetry: [] }; }
 function lerp(start, end, amount) { return start + (end - start) * amount; }
 function easeInOut(value) { return value * value * (3 - 2 * value); }
 function clamp01(value) { return Math.max(0, Math.min(1, value)); }

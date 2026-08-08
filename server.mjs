@@ -233,7 +233,7 @@ export async function createEchoAlertServer({ databasePath = path.join(root, "da
         return;
       }
 
-      const publicFile = pathname === "/" || pathname === "/index.html" || pathname === "/styles.css" || pathname === "/app.js" || pathname === "/scene3d.js" || pathname === "/navigation.js" || pathname.startsWith("/assets/");
+      const publicFile = pathname === "/" || pathname === "/index.html" || pathname === "/styles.css" || pathname === "/app.js" || pathname === "/scene3d.js" || pathname === "/navigation.js" || pathname === "/incident-manager.js" || pathname === "/unit-manager.js" || pathname.startsWith("/assets/");
       if (!publicFile) {
         sendJson(response, 404, { error: "Not found" });
         return;
