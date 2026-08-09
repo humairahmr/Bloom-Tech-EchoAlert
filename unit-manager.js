@@ -4,21 +4,22 @@ const CRUISE_MPS = 30.5;
 const TURN_MPS = 14.5;
 const APPROACH_MPS = 7.5;
 const ARRIVAL_THRESHOLD_METERS = 8;
+const RETURN_TO_BASE_MS = 700;
 
 export class UnitManager {
   constructor() {
     this.units = new Map([
       ["MED-01", createUnit("MED-01", "medical", "S")],
-      ["MED-02", createUnit("MED-02", "medical", "S2")],
-      ["POLICE-01", createUnit("POLICE-01", "police", "S2")]
+      ["MED-02", createUnit("MED-02", "medical", "S2")]
     ]);
   }
 
   list() { return [...this.units.values()]; }
   get(id) { return this.units.get(id) || null; }
+  getAvailableAmbulances() { return this.list().filter((unit) => unit.status === "AVAILABLE"); }
 
   assignMedical(incidentId, blocked = new Set()) {
-    const unit = this.list().find((candidate) => candidate.type === "medical" && candidate.status === "AVAILABLE");
+    const unit = this.getAvailableAmbulances()[0];
     if (!unit) return null;
     const route = findFastestRoute(unit.startNode, "D", blocked);
     if (!route) return null;
@@ -43,14 +44,6 @@ export class UnitManager {
       instruction: { arrow: "UP", manoeuvre: "Route calculating", distance: route.totalDistance, roadName: route.segments[0]?.roadName || "Emergency network" }
     });
     Object.assign(unit.position, poseAlongRoute(route, 0));
-    return unit;
-  }
-
-  assignPolice(incidentId) {
-    const unit = this.get("POLICE-01");
-    if (!unit || unit.status !== "AVAILABLE") return null;
-    unit.status = "RESERVED";
-    unit.assignedIncident = incidentId;
     return unit;
   }
 
@@ -79,6 +72,7 @@ export class UnitManager {
 
   update(delta) {
     const arrivals = [];
+    this.list().filter((unit) => unit.status === "RETURNING_TO_BASE" && Date.now() >= unit.returnReadyAt).forEach(resetUnit);
     this.list().filter((unit) => ["EN_ROUTE", "ARRIVING"].includes(unit.status)).forEach((unit) => {
       const before = poseAlongRoute(unit.route, unit.routeDistance);
       const remaining = Math.max(0, unit.route.totalDistance - unit.routeDistance);
@@ -159,14 +153,21 @@ export class UnitManager {
   }
 
   releaseIncident(incidentId) {
-    this.list().filter((unit) => unit.assignedIncident === incidentId).forEach(resetUnit);
+    this.list().filter((unit) => unit.assignedIncident === incidentId).forEach((unit) => this.returnAmbulanceToStandby(unit.id, incidentId));
   }
+  returnAmbulanceToStandby(id, incidentId = null) {
+    const unit = this.get(id);
+    if (!unit || (incidentId && unit.assignedIncident !== incidentId)) return null;
+    Object.assign(unit, { status: "RETURNING_TO_BASE", assignedIncident: null, position: { ...unit.standbyPosition }, speedMps: 0, etaSeconds: 0, route: null, routeDistance: 0, completedDistance: 0, routeChanges: 0, returnReadyAt: Date.now() + RETURN_TO_BASE_MS, releaseAt: new Date().toISOString(), instruction: { arrow: "UP", manoeuvre: "Returning to standby", distance: 0, roadName: "Medical base" } });
+    return unit;
+  }
+  release(id) { return this.returnAmbulanceToStandby(id); }
   resetAll() { this.list().forEach(resetUnit); }
 }
 
 function createUnit(id, type, startNode) {
   const start = startNode === "S" ? { x: -28, z: 4.2 } : { x: -28, z: -4.2 };
-  return { id, type, startNode, status: "AVAILABLE", assignedIncident: null, position: { ...start, rotation: 0 }, route: null, routeDistance: 0, completedDistance: 0, routeChanges: 0, speedMps: 0, etaSeconds: 0, instruction: null, reservedAt: null, dispatchedAt: null, startedAt: null, arrivedAt: null, handedOverAt: null, originalEtaSeconds: 0, arrivalProcessed: false, handoverCompleted: false, routeComplete: false };
+  return { id, type, startNode, status: "AVAILABLE", assignedIncident: null, position: { ...start, rotation: 0 }, standbyPosition: { ...start, rotation: 0 }, route: null, routeDistance: 0, completedDistance: 0, routeChanges: 0, speedMps: 0, etaSeconds: 0, instruction: null, reservedAt: null, dispatchedAt: null, startedAt: null, arrivedAt: null, handedOverAt: null, releaseAt: null, returnReadyAt: null, originalEtaSeconds: 0, arrivalProcessed: false, handoverCompleted: false, routeComplete: false };
 }
 function resetUnit(unit) { Object.assign(unit, createUnit(unit.id, unit.type, unit.startNode)); }
 function approach(value, target, amount) { return value < target ? Math.min(target, value + amount) : Math.max(target, value - amount); }

@@ -39,6 +39,7 @@
         <div id="primary-nav-items" class="primary-nav-items">
           <button class="rail-button" type="button" data-view="overview" aria-label="Open Overview - keyboard shortcut O"><span>Overview</span><kbd>O</kbd></button>
           <button class="rail-button active" type="button" data-view="incidents" aria-current="page" aria-label="Open Incidents - keyboard shortcut I"><span>Incidents</span><kbd>I</kbd><b id="nav-incident-count" class="nav-count" aria-label="Critical and high-priority incidents">0</b></button>
+          <button class="rail-button" type="button" data-view="simulation" aria-label="Open Simulation Lab - keyboard shortcut L"><span>Simulation Lab</span><kbd>L</kbd></button>
           <button class="rail-button" type="button" data-view="sensors" aria-label="Open Sensor Network - keyboard shortcut S"><span>Sensor Network</span><kbd>S</kbd></button>
           <button class="rail-button" type="button" data-view="responders" aria-label="Open Responders - keyboard shortcut R"><span>Responders</span><kbd>R</kbd><b id="nav-response-count" class="nav-count" aria-label="Active responders">0</b></button>
         </div>
@@ -104,11 +105,11 @@
               </select>
             </label>
 
-            <div class="compact-range">
+            <div class="compact-range" data-scenario-setting data-scenarios="confirmed sudden_stop loud_noise concurrent">
               <label for="noise-level">Ambient noise <span id="noise-readout">35 dB</span></label>
               <input id="noise-level" type="range" min="20" max="85" value="35">
             </div>
-            <div class="compact-range">
+            <div class="compact-range" data-scenario-setting data-scenarios="confirmed loud_noise pedestrian concurrent">
               <label for="event-energy">Impact intensity <span id="energy-readout">128 dB</span></label>
               <input id="event-energy" type="range" min="100" max="145" value="128">
             </div>
@@ -120,6 +121,21 @@
               <button id="reset-simulation" class="reset-action" type="button"><span aria-hidden="true">↺</span> Reset</button>
             </div>
 
+            <section id="simulation-result" class="simulation-result" aria-live="polite">
+              <span>Simulation status</span>
+              <strong id="simulation-result-title">Ready to simulate</strong>
+              <dl>
+                <div><dt>Selected</dt><dd id="simulation-result-scenario">Confirmed Vehicle Collision</dd></div>
+                <div><dt>Phase</dt><dd id="simulation-result-phase">Normal</dd></div>
+                <div><dt>Event</dt><dd id="simulation-result-event">Not created</dd></div>
+                <div><dt>Confidence</dt><dd id="simulation-result-confidence">--</dd></div>
+                <div><dt>Destination</dt><dd id="simulation-result-destination">--</dd></div>
+                <div><dt>Alert</dt><dd id="simulation-result-alert">No alert</dd></div>
+                <div><dt>Medical</dt><dd id="simulation-result-medical">Not queued</dd></div>
+              </dl>
+              <button id="view-simulation-result" type="button" data-view-target="incidents" hidden>View result</button>
+            </section>
+
             <label class="follow-control" for="follow-incident">
               <input id="follow-incident" type="checkbox" checked>
               <span>Follow incident camera</span>
@@ -129,8 +145,9 @@
           <aside class="map-inset" aria-label="Sibu incident map">
             <div class="map-inset-header">
               <div><span class="section-kicker">Acoustic grid</span><strong>Sibu Incident Map</strong></div>
-              <span id="map-status" class="map-state">Standby</span>
+              <div class="map-inset-actions"><span id="map-status" class="map-state">Standby</span><button id="toggle-acoustic-grid" type="button" aria-expanded="true">Minimise</button></div>
             </div>
+            <button id="expand-acoustic-grid" class="acoustic-grid-chip" type="button" hidden><span><strong>Acoustic Grid</strong><small><b id="acoustic-online-count">6</b> sensors online · Monitoring</small></span><b>Expand</b></button>
             <svg id="city-map" viewBox="0 0 1200 720" role="img" aria-labelledby="map-title map-desc">
               <title id="map-title">Sibu acoustic sensor network</title>
               <desc id="map-desc">A compact dark map showing six acoustic sensor nodes and the triangulated crash location.</desc>
@@ -162,7 +179,7 @@
           <div class="scene-metrics" aria-label="Live simulation metrics">
             <div><span>Phase</span><strong id="phase-label">Normal</strong></div>
             <div><span>Vehicle A</span><strong id="vehicle-speed">48 km/h</strong></div>
-            <div><span>Response unit</span><strong id="unit-state">MED-01 standby</strong></div>
+            <div><span>Response unit</span><strong id="unit-state">Medical fleet available</strong></div>
             <div><span>ETA</span><strong id="eta-label">--:--</strong></div>
             <div><span>Arrival</span><strong id="arrival-time">--</strong></div>
           </div>
@@ -213,14 +230,13 @@
                 <div><span>Priority</span><strong id="arrival-priority">--</strong></div>
                 <div><span>Sensor fusion</span><strong id="arrival-fusion">--</strong></div>
                 <div><span>Medical classification</span><strong id="arrival-classification">--</strong></div>
-                <div><span>Police coordination</span><strong id="arrival-police">--</strong></div>
                 <div><span>Human review</span><strong id="arrival-review-status">--</strong></div>
                 <div id="handover-time-field" hidden><span>Handed over</span><strong id="handover-time">--</strong></div>
                 <div id="handover-duration-field" hidden><span>Arrival to handover</span><strong id="handover-duration">--</strong></div>
                 <section class="arrival-detail arrival-wide"><span>Arrival timeline</span><ol id="arrival-timeline"></ol></section>
                 <section class="arrival-detail arrival-wide"><span>On-scene notes</span><p id="arrival-notes">No dispatcher notes</p></section>
               </div>
-              <footer class="arrival-summary-footer"><button id="handover-response" type="button">Hand Over to On-Scene Response</button></footer>
+              <footer class="arrival-summary-footer"><button id="handover-response" type="button">Hand Over to On-Scene Response</button><button id="close-incident" type="button" hidden>Close Incident</button></footer>
             </section>
           </section>
         </section>
@@ -236,12 +252,18 @@
             <div id="detection-log-list" class="detection-log-list"></div>
           </section>
           <section id="incident-tab-resolved" class="incident-tab-panel" role="tabpanel" hidden>
+            <div id="resolved-incident-list" class="entity-strip" aria-label="Resolved incidents"></div>
             <details class="incident-history" open>
               <summary><span>Incident history</span><span><b id="review-count">0</b> awaiting review</span></summary>
               <div class="history-toolbar"><span>Dispatcher decisions and response outcomes</span><button id="clear-history" type="button">Clear History</button></div>
               <div class="table-wrap"><table><thead><tr><th>Incident</th><th>Time</th><th>Location</th><th>Trigger</th><th>Vision</th><th>Audio</th><th>Fusion</th><th>Decision</th><th>Dispatch</th><th>Response</th><th>Notes</th></tr></thead><tbody id="history-body"><tr class="empty-history"><td colspan="11">No completed demonstrations yet</td></tr></tbody></table></div>
             </details>
           </section>
+        </section>
+
+        <section id="view-simulation" class="workspace-view" data-workspace="simulation" aria-labelledby="simulation-lab-title" hidden>
+          <header class="workspace-heading"><div><span class="section-kicker">Demonstration workspace</span><h1 id="simulation-lab-title" tabindex="-1">Simulation Lab</h1></div><p>Run scenarios without interrupting live incident operations</p></header>
+          <div id="simulation-lab-slot" class="workspace-stage-slot simulation-lab-slot"></div>
         </section>
 
         <section id="view-sensors" class="workspace-view" data-workspace="sensors" aria-labelledby="sensors-title" hidden>
@@ -269,6 +291,7 @@
         <section id="view-responders" class="workspace-view" data-workspace="responders" aria-labelledby="responders-title" hidden>
           <header class="workspace-heading"><div><span class="section-kicker">Emergency resources</span><h1 id="responders-title" tabindex="-1">Responders</h1></div><p>Availability, assignments, navigation and on-scene response</p></header>
           <div id="responder-summary" class="summary-grid summary-grid-compact"></div>
+          <section class="workspace-band"><header><div><span class="section-kicker">Medical dispatch</span><h2>Medical Queue</h2></div><span id="medical-queue-count">0 waiting</span></header><div id="medical-queue-list" class="entity-strip" aria-label="Medical dispatch queue"></div></section>
           <div id="unit-list" class="entity-strip responder-entity-strip" aria-label="Response units"></div>
           <div id="responder-stage-slot" class="workspace-stage-slot"><div class="empty-workspace"><strong>Select an assigned unit</strong><span>Navigation and arrival information will appear here without restarting its route.</span></div></div>
         </section>
@@ -350,14 +373,15 @@
               <div class="pedestrian-fact" hidden><dt>Tracking IDs</dt><dd id="modal-tracking-ids">PEDESTRIAN-02 / VEHICLE-07</dd></div>
               <div class="pedestrian-fact" hidden><dt>Plate candidate</dt><dd id="modal-plate">QAB 4721 - 94.6%</dd></div>
               <div class="pedestrian-fact" hidden><dt>Last known</dt><dd id="modal-last-known">Northbound - CCTV #05</dd></div>
-              <div class="pedestrian-fact" hidden><dt>Available units</dt><dd id="modal-units">MED-01 / MED-02 / POLICE-01</dd></div>
+                <div class="pedestrian-fact" hidden><dt>Available ambulances</dt><dd id="modal-units">MED-01 / MED-02</dd></div>
             </dl>
             <p id="emergency-note" class="match-note">Visual and acoustic events matched within the same incident window, reducing false-positive risk through independent confirmation.</p>
             <div class="modal-actions">
-              <button id="dispatch-btn" class="dispatch-button" type="button"><span aria-hidden="true">➤</span> Dispatch Medical Tier 1</button>
-              <button id="false-alarm-btn" class="false-alarm-button" type="button">Dismiss / False Alarm</button>
-              <button id="human-review-btn" class="human-review-button" type="button" hidden>Escalate for Human Review</button>
-              <div id="pedestrian-review-actions" class="pedestrian-review-actions" hidden><button id="confirm-pedestrian-btn" class="dispatch-button" type="button">Dispatch Medical Now</button><button id="dispatch-pending-btn" type="button">Dispatch Medical - Keep Review Pending</button><button id="police-coordination-btn" type="button">Request Police Coordination</button><button id="pedestrian-false-alarm-btn" type="button">Mark as False Alarm</button><button id="continue-pedestrian-btn" type="button">Continue Monitoring</button><button id="minimise-review-btn" type="button">Minimise Review</button></div>
+              <button id="dispatch-btn" class="dispatch-button" type="button" data-action="dispatch-medical"><span aria-hidden="true">➤</span> Dispatch Medical Tier 1</button>
+              <button id="false-alarm-btn" class="false-alarm-button" type="button" data-action="false-alarm">Dismiss / False Alarm</button>
+              <button id="critical-queue-btn" type="button" data-action="queue-medical" hidden>Add to Medical Queue</button><button id="critical-go-queue-btn" type="button" data-action="go-medical-queue" hidden>Go to Queue</button>
+              <button id="human-review-btn" class="human-review-button" type="button" data-action="human-review" hidden>Escalate for Human Review</button>
+              <div id="pedestrian-review-actions" class="pedestrian-review-actions" hidden><button id="confirm-pedestrian-btn" class="dispatch-button" type="button" data-action="dispatch-medical">Dispatch Medical Now</button><button id="dispatch-pending-btn" type="button" data-action="dispatch-medical-pending">Dispatch Medical - Keep Review Pending</button><button id="queue-medical-btn" type="button" data-action="queue-medical">Add to Medical Queue</button><button id="go-medical-queue-btn" type="button" data-action="go-medical-queue">Go to Queue</button><button id="pedestrian-false-alarm-btn" type="button" data-action="pedestrian-false-alarm">Mark as False Alarm</button><button id="continue-pedestrian-btn" type="button" data-action="minimise-review">Continue Monitoring</button><button id="minimise-review-btn" type="button" data-action="minimise-review">Minimise Review</button></div>
             </div>
           </aside>
         </div>
@@ -377,6 +401,6 @@
         document.documentElement.dataset.appError = String(event.reason && event.reason.message || event.reason || "Unhandled application error");
       });
     </script>
-    <script type="module" src="app.js" onerror="document.documentElement.dataset.moduleError='Failed to load application module'"></script>
+    <script type="module" src="app.js?v=simulation-lab-3" onerror="document.documentElement.dataset.moduleError='Failed to load application module'"></script>
   </body>
 </html>

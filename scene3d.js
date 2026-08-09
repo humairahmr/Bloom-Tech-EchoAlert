@@ -78,9 +78,9 @@ function createPedestrian() {
   return group;
 }
 
-function createVehicle(color, { ambulance = false } = {}) {
+function createVehicle(color, { ambulance = false, ambulanceId = "MED-01" } = {}) {
   const group = new THREE.Group();
-  group.name = ambulance ? "MED-01" : "civilian-vehicle";
+  group.name = ambulance ? ambulanceId : "civilian-vehicle";
 
   const bodyMaterial = material(color, { roughness: 0.46, metalness: 0.28 });
   const glassMaterial = material(0x6c8995, { roughness: 0.18, metalness: 0.2, transparent: true, opacity: 0.88 });
@@ -402,14 +402,20 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   const cctvFiveBody = box(1.1,.45,.55,material(0x68787c)); cctvFiveBody.position.set(.4,5,0); cctvFive.add(cctvFivePole,cctvFiveBody); cctvFive.position.set(-9,0,25); scene.add(cctvFive);
   const cctvFiveLabel = createLabelSprite("CCTV #05", "#36c5dd"); cctvFiveLabel.position.set(-9,6.5,25); scene.add(cctvFiveLabel);
 
-  const ambulance = createVehicle(0xe9eeee, { ambulance: true });
+  const medicalFleet = new Map();
+  const ambulance = createVehicle(0xe9eeee, { ambulance: true, ambulanceId: "MED-01" });
   ambulance.position.set(-27, 0, 4.2);
+  ambulance.visible = false;
   scene.add(ambulance);
   const ambulanceLabel = createLabelSprite("MED-01", "#ff6d73");
   ambulanceLabel.scale.multiplyScalar(0.72);
+  ambulanceLabel.visible = false;
   scene.add(ambulanceLabel);
-  const ambulanceTwo = createVehicle(0xe9eeee, { ambulance: true }); ambulanceTwo.position.set(-27,0,-4.2); scene.add(ambulanceTwo);
-  const ambulanceTwoLabel = createLabelSprite("MED-02", "#ff6d73"); ambulanceTwoLabel.scale.multiplyScalar(.72); scene.add(ambulanceTwoLabel);
+  const ambulanceTwo = createVehicle(0xe9eeee, { ambulance: true, ambulanceId: "MED-02" }); ambulanceTwo.position.set(-27,0,-4.2); ambulanceTwo.visible = false; scene.add(ambulanceTwo);
+  const ambulanceTwoLabel = createLabelSprite("MED-02", "#ff6d73"); ambulanceTwoLabel.scale.multiplyScalar(.72); ambulanceTwoLabel.visible = false; scene.add(ambulanceTwoLabel);
+  medicalFleet.set("MED-01", { mesh: ambulance, label: ambulanceLabel });
+  medicalFleet.set("MED-02", { mesh: ambulanceTwo, label: ambulanceTwoLabel });
+  renderer.domElement.dataset.ambulanceModelCount = String(medicalFleet.size);
 
   const incidentMarkerGroup = new THREE.Group(); scene.add(incidentMarkerGroup);
   const renderedIncidentMarkers = new Map();
@@ -561,7 +567,10 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     const position = unit.position || unit;
     mesh.position.set(position.x,0,position.z); mesh.rotation.y = position.rotation || 0;
     label.position.set(position.x,4.25,position.z);
-    label.visible = !(state.activeNavigationUnit === unit.id && state.cameraMode === "responder" && !state.navigationMinimized);
+    const activated = ["RESERVED","EN_ROUTE","ARRIVING","ON_SCENE","HANDOVER_COMPLETE"].includes(unit.status) && Boolean(unit.assignedIncident);
+    mesh.visible = activated;
+    renderer.domElement.dataset[`${unit.id.toLowerCase().replace("-", "")}Visible`] = String(activated);
+    label.visible = activated && !(state.activeNavigationUnit === unit.id && state.cameraMode === "responder" && !state.navigationMinimized);
     const emergency = ["EN_ROUTE","ARRIVING","ON_SCENE"].includes(unit.status);
     mesh.userData.emergencyLights.forEach((bulb,index) => { const active = emergency && Math.floor(state.elapsed * 6)%2 === index; bulb.material.emissiveIntensity = active ? 5 : .05; mesh.userData.emergencyReflections[index].intensity = active ? 4 : 0; });
   }
@@ -572,7 +581,7 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
     (state.incidents || []).forEach((incident) => {
       let marker = renderedIncidentMarkers.get(incident.id);
       if (!marker) { marker = new THREE.Mesh(new THREE.RingGeometry(1.3,1.72,36),new THREE.MeshBasicMaterial({color:COLORS.amber,transparent:true,opacity:.85,side:THREE.DoubleSide})); marker.rotation.x=-Math.PI/2; marker.position.y=.55; incidentMarkerGroup.add(marker); renderedIncidentMarkers.set(incident.id,marker); }
-      const color = incident.policeUnit ? 0x9b6dff : incident.assignedUnit ? COLORS.blue : ["CONFIRMED_INCIDENT","RESPONDER_ARRIVED","ON_SCENE_RESPONSE"].includes(incident.state) ? COLORS.red : ["FALSE_ALARM","CLOSED"].includes(incident.state) ? 0x6d898e : COLORS.amber;
+      const color = incident.assignedUnit ? COLORS.blue : ["CONFIRMED_INCIDENT","RESPONDER_ARRIVED","ON_SCENE_RESPONSE"].includes(incident.state) ? COLORS.red : ["FALSE_ALARM","CLOSED"].includes(incident.state) ? 0x6d898e : COLORS.amber;
       marker.position.x = incident.position?.x || 0; marker.position.z = incident.position?.z || 0; marker.material.color.setHex(color);
       marker.material.opacity = incident.minimized ? .45 + Math.sin(state.elapsed*6)*.25 : .88;
     });
@@ -769,6 +778,15 @@ export function createRoadScene({ container, evidenceCanvas, getState, onFrame }
   frameHandle = requestAnimationFrame(frame);
 
   return {
+    refresh() { resize(); },
+    diagnostics() {
+      return {
+        rendererCount: 1,
+        canvasCount: container.querySelectorAll("canvas.road-scene-canvas").length,
+        ambulanceModels: Object.fromEntries([...medicalFleet].map(([id, entry]) => [id, scene.getObjectsByProperty("name", id).filter((object) => object === entry.mesh).length])),
+        ambulanceVisibility: Object.fromEntries([...medicalFleet].map(([id, entry]) => [id, entry.mesh.visible]))
+      };
+    },
     destroy() {
       cancelAnimationFrame(frameHandle);
       resizeObserver.disconnect();
